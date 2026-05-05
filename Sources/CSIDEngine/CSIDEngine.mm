@@ -186,6 +186,11 @@ static NSError *makeError(NSString *msg) {
     _engine->mute(0, (unsigned)voice, !muted);
 }
 
+- (NSInteger)cia1TimerA {
+    if (!_engine) return 0;
+    return (NSInteger)_engine->getCia1TimerA();
+}
+
 - (void)stop {
     if (_engine) _engine->load(nullptr);
     _scratch.clear();

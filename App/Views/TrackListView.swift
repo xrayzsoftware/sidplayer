@@ -19,6 +19,16 @@ struct TrackListView: View {
 
         Table(state.sortedRows, selection: $state.selectedID, sortOrder: sortBinding) {
             TableColumn("") { (item: TuneItem) in
+                if state.currentTuneID == item.id {
+                    Image(systemName: state.isPlaying ? "play.fill" : "pause.fill")
+                        .foregroundStyle(theme.textAccent)
+                        .font(.system(size: 10))
+                } else {
+                    Color.clear
+                }
+            }.width(16)
+
+            TableColumn("") { (item: TuneItem) in
                 Button {
                     state.toggleFavorite(item.id)
                 } label: {
@@ -27,10 +37,6 @@ struct TrackListView: View {
                 }
                 .buttonStyle(.plain)
             }.width(20)
-
-            TableColumn("#", value: \.id) { (item: TuneItem) in
-                Text("\(item.id)")
-            }.width(min: 36, ideal: 40, max: 50)
 
             TableColumn("Title", value: \.row.title, comparator: OptionalStringComparator()) { (item: TuneItem) in
                 Text(item.row.title ?? "—")

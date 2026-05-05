@@ -5,7 +5,6 @@ struct TransportBar: View {
 
     var body: some View {
         @Bindable var state = state
-        let voiceColors: [Color] = [state.theme.voice1, state.theme.voice2, state.theme.voice3]
 
         HStack(spacing: 12) {
             HStack(spacing: 4) {
@@ -35,33 +34,6 @@ struct TransportBar: View {
             }
 
             Spacer()
-
-            HStack(spacing: 4) {
-                ForEach(0..<3, id: \.self) { v in
-                    let muted = state.voiceMuted[v]
-                    Button { state.toggleVoiceMute(v) } label: {
-                        Text("V\(v + 1)")
-                            .font(.system(size: 10, weight: .heavy, design: .monospaced))
-                            .frame(width: 26, height: 18)
-                            .foregroundStyle(muted ? Color.secondary : Color.black)
-                            .background(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .fill(muted
-                                          ? Color.gray.opacity(0.15)
-                                          : voiceColors[v].opacity(0.85))
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: 4)
-                                    .stroke(muted
-                                            ? Color.gray.opacity(0.45)
-                                            : voiceColors[v],
-                                            lineWidth: 1)
-                            )
-                    }
-                    .buttonStyle(.plain)
-                    .help(muted ? "Unmute voice \(v + 1)" : "Mute voice \(v + 1)")
-                }
-            }
 
             Text(timeLabel)
                 .font(.system(size: 13, design: .monospaced))

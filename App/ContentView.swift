@@ -18,11 +18,6 @@ struct ContentView: View {
                 .frame(height: 96)
                 .padding(.horizontal, 12)
 
-                InfoBar()
-                    .padding(.horizontal, 12).padding(.top, 8).padding(.bottom, 4)
-
-                Divider()
-
                 TransportBar()
                     .padding(.horizontal, 12).padding(.vertical, 8)
 
@@ -74,16 +69,6 @@ struct ContentView: View {
             }
         }
         .background(state.theme.windowBackground)
-        .toolbar {
-            ToolbarItem(placement: .primaryAction) {
-                Button {
-                    state.showSettingsSheet = true
-                } label: {
-                    Image(systemName: "gearshape")
-                }
-                .help("Library settings")
-            }
-        }
         .sheet(isPresented: $state.showSettingsSheet) {
             SettingsSheet()
         }

@@ -34,14 +34,25 @@ targets:
         product: SIDEngine
       - package: sidplayer
         product: SIDCatalog
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleDisplayName: "SID Player"
+        CFBundleName: "SID Player"
+        CFBundleIconFile: "AppIcon"
+        LSApplicationCategoryType: "public.app-category.music"
+        LSMinimumSystemVersion: "14.0"
+        NSHumanReadableCopyright: ""
+        NSPrincipalClass: "NSApplication"
+        CFBundleShortVersionString: "0.1"
+        CFBundleVersion: "1"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sidplayer.app
         PRODUCT_NAME: "SID Player"
-        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
-        INFOPLIST_KEY_NSHumanReadableCopyright: ""
-        INFOPLIST_KEY_CFBundleDisplayName: "SID Player"
-        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.music"
+        # Bundling a hand-built AppIcon.icns from App/. actool silently
+        # dropped half the sizes from generated .icns files.
+        GENERATE_INFOPLIST_FILE: NO
         # Local-dev signing: ad-hoc, no team required.
         CODE_SIGN_STYLE: Manual
         CODE_SIGN_IDENTITY: "-"

@@ -35,6 +35,7 @@ public final class AppState {
     // MARK: Theme
     public var theme: AppTheme = .systemDefault
     public var showScroller: Bool = true
+    public var allTabLimit: Int = 10_000
 
     // MARK: Catalog
     public var catalog: CatalogDB?
@@ -84,8 +85,6 @@ public final class AppState {
     public var defaultLengthMs: Int = 0
     /// Per-subtune lengths in ms (0-indexed by subtune). Empty if unknown.
     public var subtuneLengthsMs: [Int] = []
-    /// Per-voice mute state for V1, V2, V3.
-    public var voiceMuted: [Bool] = [false, false, false]
     public var volume: Double = 0.8 {
         didSet { player.setVolume(Float(volume)) }
     }
@@ -95,6 +94,7 @@ public final class AppState {
     private static let favoritesKey = "favoriteIDs.v1"
     private static let themeKey     = "themeID.v1"
     private static let scrollerKey  = "showScroller.v1"
+    private static let allLimitKey  = "allTabLimit.v1"
 
     public init() {
         player.setVolume(Float(volume))
@@ -103,6 +103,14 @@ public final class AppState {
         if UserDefaults.standard.object(forKey: Self.scrollerKey) != nil {
             showScroller = UserDefaults.standard.bool(forKey: Self.scrollerKey)
         }
+        let savedLimit = UserDefaults.standard.integer(forKey: Self.allLimitKey)
+        if savedLimit > 0 { allTabLimit = savedLimit }
+    }
+
+    public func setAllTabLimit(_ limit: Int) {
+        allTabLimit = limit
+        UserDefaults.standard.set(limit, forKey: Self.allLimitKey)
+        Task { try? await refreshSearch() }
     }
 
     public func toggleScroller() {
@@ -143,7 +151,13 @@ public final class AppState {
 
     public func setBrowseMode(_ mode: BrowseMode) {
         browseMode = mode
-        searchQuery = ""    // clear filter on tab switch
+        searchQuery = ""
+        // Clear stale rows synchronously so the new tab doesn't briefly
+        // render with the previous tab's data while refreshSearch is
+        // still pending.
+        rows = []
+        sortedRows = []
+        browseDirs = []
         if mode == .browse && browsePath.isEmpty { browsePath = "" }
         Task { try? await refreshSearch() }
     }
@@ -270,10 +284,9 @@ public final class AppState {
         guard let db = catalog else { return }
         switch browseMode {
         case .all:
-            // 60k items overload SwiftUI Table sorting (Debug builds in
-            // particular). Cap at 1000 — use Search or Browse to find the
-            // rest. Ranked results come back first regardless of query.
-            let results = try db.search(searchQuery, limit: 1000)
+            // Cap configurable via Settings. Release builds handle 10k+
+            // comfortably; very large caps slow tab switching + sorting.
+            let results = try db.search(searchQuery, limit: allTabLimit)
             self.rows = results.compactMap(TuneItem.init(row:))
             self.browseDirs = []
             applySort()
@@ -332,10 +345,6 @@ public final class AppState {
             subtuneCount     = player.info?.songCount ?? 1
             defaultLengthMs  = row.defaultLengthMs ?? 0
             subtuneLengthsMs = ((try? db.lengths(tuneId: tuneID)) ?? []).map(\.durationMs)
-            // Engines start with all voices unmuted by default; no explicit
-            // call needed (and it would race with the producer thread's
-            // play() loop). Just reset our UI state.
-            voiceMuted       = [false, false, false]
             isPlaying        = true
             lastError        = nil
             startTicker()
@@ -430,12 +439,6 @@ public final class AppState {
         } else {
             jumpToAdjacentTrack(offset: +1)
         }
-    }
-
-    public func toggleVoiceMute(_ voice: Int) {
-        guard (0..<3).contains(voice) else { return }
-        voiceMuted[voice].toggle()
-        player.engine.setVoiceMuted(voice, muted: voiceMuted[voice])
     }
 
     /// STIL is large (~60 MB text). Loaded once on first request, off main.

@@ -6,10 +6,13 @@ struct SettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
 
     var body: some View {
+        let theme = state.theme
+
         VStack(alignment: .leading, spacing: 16) {
             HStack {
                 Text("HVSC Library")
                     .font(.headline)
+                    .foregroundStyle(theme.textPrimary)
                 Spacer()
                 Button("Done") { dismiss() }
                     .keyboardShortcut(.cancelAction)
@@ -18,10 +21,10 @@ struct SettingsSheet: View {
             VStack(alignment: .leading, spacing: 4) {
                 Text("Current source")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.textSecondary)
                 Text(state.hvscSource?.root.path ?? "— not configured —")
                     .font(.system(.callout, design: .monospaced))
-                    .foregroundStyle(state.hvscSource == nil ? .red : .primary)
+                    .foregroundStyle(state.hvscSource == nil ? Color.red : theme.textPrimary)
                     .textSelection(.enabled)
             }
 
@@ -43,22 +46,24 @@ struct SettingsSheet: View {
             case .downloadingHVSC(let progress, let label):
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: progress)
+                        .tint(theme.textAccent)
                     Text(label)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(theme.textSecondary)
                 }
             case .indexing(let processed, let total):
                 VStack(alignment: .leading, spacing: 4) {
                     if let total {
                         ProgressView(value: Double(processed), total: Double(total))
+                            .tint(theme.textAccent)
                         Text("\(processed) / \(total) tunes")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.textSecondary)
                     } else {
                         ProgressView()
                         Text("Discovering tunes…")
                             .font(.caption)
-                            .foregroundStyle(.secondary)
+                            .foregroundStyle(theme.textSecondary)
                     }
                 }
             case .error(let msg):
@@ -69,38 +74,81 @@ struct SettingsSheet: View {
                 EmptyView()
             }
 
-            Divider()
+            Divider().background(theme.separator)
 
             VStack(alignment: .leading, spacing: 4) {
                 Text("Catalog")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(theme.textSecondary)
                 Text("\((try? state.catalog?.count()) ?? 0) tunes indexed")
                     .font(.callout)
+                    .foregroundStyle(theme.textPrimary)
             }
 
-            Divider()
+            Divider().background(theme.separator)
+
+            BrowsingLimitSection()
+
+            Divider().background(theme.separator)
 
             ThemePickerSection()
         }
         .padding(20)
-        .frame(width: 480)
+        .frame(width: 520)
+        .background(theme.windowBackground)
+    }
+
+    private struct BrowsingLimitSection: View {
+        @Environment(AppState.self) private var state
+        private let options: [(label: String, value: Int)] = [
+            ("1,000",  1_000),
+            ("5,000",  5_000),
+            ("10,000", 10_000),
+            ("25,000", 25_000),
+            ("50,000", 50_000),
+            ("All",    1_000_000),
+        ]
+
+        var body: some View {
+            let theme = state.theme
+            VStack(alignment: .leading, spacing: 6) {
+                Text("All-tab row limit")
+                    .font(.headline)
+                    .foregroundStyle(theme.textPrimary)
+                Text("More rows = slower sorting and tab switching. 10,000 is comfortable on a Release build.")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+                Picker("", selection: Binding(
+                    get: { state.allTabLimit },
+                    set: { state.setAllTabLimit($0) }
+                )) {
+                    ForEach(options, id: \.value) { opt in
+                        Text(opt.label).tag(opt.value)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+            }
+        }
     }
 
     private struct ThemePickerSection: View {
         @Environment(AppState.self) private var state
 
         var body: some View {
+            let theme = state.theme
             VStack(alignment: .leading, spacing: 8) {
                 Text("Theme")
                     .font(.headline)
+                    .foregroundStyle(theme.textPrimary)
 
-                let cols = [GridItem(.adaptive(minimum: 140), spacing: 8)]
+                let cols = [GridItem(.adaptive(minimum: 150), spacing: 8)]
                 LazyVGrid(columns: cols, alignment: .leading, spacing: 8) {
-                    ForEach(AppTheme.allPresets) { theme in
-                        ThemeCard(theme: theme,
-                                  selected: state.theme.id == theme.id) {
-                            state.setTheme(theme)
+                    ForEach(AppTheme.allPresets) { preset in
+                        ThemeCard(preset: preset,
+                                  selected: state.theme.id == preset.id,
+                                  activeTheme: theme) {
+                            state.setTheme(preset)
                         }
                     }
                 }
@@ -109,35 +157,37 @@ struct SettingsSheet: View {
     }
 
     private struct ThemeCard: View {
-        let theme: AppTheme
+        let preset: AppTheme
         let selected: Bool
+        let activeTheme: AppTheme
         let onSelect: () -> Void
 
         var body: some View {
             Button(action: onSelect) {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(spacing: 4) {
-                        // 6 swatches showing the palette
-                        swatch(theme.windowBackground)
-                        swatch(theme.waveform)
-                        swatch(theme.voice2)
-                        swatch(theme.voice3)
-                        swatch(theme.peakGradient.last ?? theme.textAccent)
-                        swatch(theme.textPrimary)
+                        swatch(preset.windowBackground)
+                        swatch(preset.waveform)
+                        swatch(preset.voice2)
+                        swatch(preset.voice3)
+                        swatch(preset.peakGradient.last ?? preset.textAccent)
+                        swatch(preset.textPrimary)
                     }
-                    Text(theme.name)
+                    Text(preset.name)
                         .font(.system(size: 12, weight: selected ? .semibold : .regular))
-                        .foregroundStyle(selected ? Color.primary : Color.secondary)
+                        .foregroundStyle(selected ? activeTheme.textPrimary : activeTheme.textSecondary)
                 }
                 .padding(8)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(selected ? Color.accentColor.opacity(0.15) : Color.gray.opacity(0.08))
+                        .fill(selected
+                              ? activeTheme.textAccent.opacity(0.18)
+                              : activeTheme.panelBackground.opacity(0.5))
                 )
                 .overlay(
                     RoundedRectangle(cornerRadius: 6)
-                        .stroke(selected ? Color.accentColor : Color.gray.opacity(0.25),
+                        .stroke(selected ? activeTheme.textAccent : activeTheme.separator,
                                 lineWidth: selected ? 1.5 : 1)
                 )
             }
@@ -150,7 +200,7 @@ struct SettingsSheet: View {
                 .frame(width: 14, height: 14)
                 .overlay(
                     RoundedRectangle(cornerRadius: 2)
-                        .stroke(Color.black.opacity(0.15), lineWidth: 0.5)
+                        .stroke(Color.black.opacity(0.20), lineWidth: 0.5)
                 )
         }
     }

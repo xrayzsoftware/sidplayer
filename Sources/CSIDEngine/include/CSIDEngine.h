@@ -66,6 +66,10 @@ typedef NS_ENUM(NSInteger, CSIDModel) {
 /// immediately. Pass NO to re-enable. Only valid after startSong:.
 - (void)setVoiceMuted:(NSInteger)voice muted:(BOOL)muted;
 
+/// Returns the CIA1 Timer A value the tune programmed during init, or 0
+/// if VBI-driven. Convertible to a play-rate multiplier of the video frame.
+- (NSInteger)cia1TimerA;
+
 - (void)stop;
 @end
 
