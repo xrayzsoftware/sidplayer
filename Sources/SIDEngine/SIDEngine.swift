@@ -61,6 +61,12 @@ public final class SIDPlayerEngine {
         self.bridge = CSIDEngine()
     }
 
+    /// Compute the HVSC#68+ MD5 of a SID file without instantiating an engine.
+    /// Returns nil if the file isn't a valid SID.
+    public static func md5(forFileAt path: String) -> String? {
+        CSIDEngine.md5ForFile(atPath: path)
+    }
+
     public func load(path: String) throws {
         try bridge.loadTune(atPath: path)
     }

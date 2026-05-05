@@ -25,6 +25,14 @@
 
 @synthesize currentSong = _currentSong;
 
++ (NSString *)md5ForFileAtPath:(NSString *)path {
+    SidTune tune([path UTF8String], nullptr, true);
+    if (!tune.getStatus()) return nil;
+    char md5buf[SidTune::MD5_LENGTH + 1] = {0};
+    const char *m = tune.createMD5New(md5buf);
+    return (m && *m) ? @(m) : nil;
+}
+
 static NSError *makeError(NSString *msg) {
     return [NSError errorWithDomain:@"CSIDEngine"
                                code:1

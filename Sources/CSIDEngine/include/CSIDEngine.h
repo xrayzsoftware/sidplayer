@@ -30,6 +30,12 @@ typedef NS_ENUM(NSInteger, CSIDModel) {
 @end
 
 @interface CSIDEngine : NSObject
+
+/// Cheap MD5 helper that doesn't allocate an engine. Loads the file via SidTune
+/// and returns the HVSC#68+ MD5 (the format Songlengths.md5 keys on).
+/// Returns nil if the file isn't a valid SID.
++ (nullable NSString *)md5ForFileAtPath:(NSString *)path;
+
 - (instancetype)init;
 
 - (BOOL)loadTuneAtPath:(NSString *)path

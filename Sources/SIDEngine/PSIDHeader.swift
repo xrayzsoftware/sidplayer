@@ -45,6 +45,14 @@ public struct PSIDHeader: Sendable, Equatable {
         }
     }
 
+    /// 1, 2, or 3, derived from the v3+ secondSIDAddress / thirdSIDAddress fields.
+    public var sidChips: Int {
+        var n = 1
+        if secondSIDAddress != nil { n += 1 }
+        if thirdSIDAddress != nil  { n += 1 }
+        return n
+    }
+
     public enum ParseError: Error, CustomStringConvertible {
         case fileTooShort(Int)
         case badMagic(String)
