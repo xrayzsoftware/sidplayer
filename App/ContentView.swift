@@ -7,16 +7,23 @@ struct ContentView: View {
         @Bindable var state = state
 
         VStack(spacing: 0) {
+            // Reserve space for the traffic lights (window uses .hiddenTitleBar
+            // so SwiftUI content extends to the very top — without padding,
+            // header content slides under the close/min/zoom buttons).
+            Color.clear.frame(height: 28)
+
             if state.bootstrap == .ready || !state.rows.isEmpty {
                 NowPlayingHeader()
                     .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
 
-                HStack(spacing: 8) {
-                    WaveformView(taps: state.player.voiceTaps)
-                    PeakMeterView(tap: state.player.vizTap)
+                if state.showVisualizers {
+                    HStack(spacing: 8) {
+                        WaveformView(taps: state.player.voiceTaps)
+                        PeakMeterView(tap: state.player.vizTap)
+                    }
+                    .frame(height: 96)
+                    .padding(.horizontal, 12)
                 }
-                .frame(height: 96)
-                .padding(.horizontal, 12)
 
                 TransportBar()
                     .padding(.horizontal, 12).padding(.vertical, 8)

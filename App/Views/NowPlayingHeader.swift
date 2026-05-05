@@ -42,6 +42,18 @@ struct NowPlayingHeader: View {
             Spacer()
 
             HStack(spacing: 14) {
+                Button { state.toggleVisualizers() } label: {
+                    Image(systemName: state.showVisualizers ? "waveform" : "waveform.slash")
+                        .font(.system(size: 16))
+                        .foregroundStyle(state.showVisualizers
+                                         ? state.theme.textAccent
+                                         : state.theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help(state.showVisualizers
+                      ? "Hide visualizers (saves CPU)"
+                      : "Show visualizers")
+
                 Button { state.toggleScroller() } label: {
                     Image(systemName: "text.alignleft")
                         .font(.system(size: 16))

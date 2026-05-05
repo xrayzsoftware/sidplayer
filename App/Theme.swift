@@ -33,12 +33,25 @@ public struct AppTheme: Equatable, Sendable, Identifiable {
 
     // Misc
     public let star: Color
+
+    /// Drives NSWindow.appearance so the title bar uses dark or light system
+    /// chrome to match the theme. The theme color is then layered on top.
+    public var isDark: Bool {
+        switch id {
+        case "solarizedLight", "githubLight", "atomOneLight", "catppuccinLatte":
+            return false
+        default:
+            return true
+        }
+    }
 }
 
 public extension AppTheme {
     static let allPresets: [AppTheme] = [
-        .systemDefault, .nord, .tokyoNight, .dracula,
-        .gruvboxDark, .catppuccinMocha, .solarizedDark, .monokai
+        .systemDefault,
+        .nord, .tokyoNight, .dracula, .gruvboxDark,
+        .catppuccinMocha, .solarizedDark, .monokai,
+        .solarizedLight, .githubLight, .atomOneLight, .catppuccinLatte
     ]
 
     static func preset(id: String) -> AppTheme {
@@ -216,6 +229,106 @@ public extension AppTheme {
         scrollerText: Color(hex: 0x2AA198),
         star: Color(hex: 0xB58900)
     )
+
+    // MARK: - Light themes
+
+    static let solarizedLight = AppTheme(
+        id: "solarizedLight", name: "Solarized Light",
+        windowBackground:     Color(hex: 0xFDF6E3),
+        panelBackground:      Color(hex: 0xEEE8D5),
+        visualizerBackground: Color(hex: 0x002B36),  // dark "screen" inset
+        textPrimary:   Color(hex: 0x657B83),
+        textSecondary: Color(hex: 0x93A1A1),
+        textAccent:    Color(hex: 0x268BD2),
+        separator:     Color(hex: 0xD8D2BC),
+        selection:     Color(hex: 0x268BD2).opacity(0.20),
+        waveform:      Color(hex: 0x859900),
+        voice1:        Color(hex: 0x859900),  // green
+        voice2:        Color(hex: 0x268BD2),  // blue
+        voice3:        Color(hex: 0xCB4B16),  // orange
+        peakGradient: [
+            Color(hex: 0x859900), Color(hex: 0x2AA198),
+            Color(hex: 0xB58900), Color(hex: 0xDC322F)
+        ],
+        peakCap:    Color(hex: 0xFDF6E3),
+        peakCapHot: Color(hex: 0xDC322F),
+        scrollerText: Color(hex: 0x2AA198),
+        star: Color(hex: 0xB58900)
+    )
+
+    static let githubLight = AppTheme(
+        id: "githubLight", name: "GitHub Light",
+        windowBackground:     Color(hex: 0xFFFFFF),
+        panelBackground:      Color(hex: 0xF6F8FA),
+        visualizerBackground: Color(hex: 0x24292F),
+        textPrimary:   Color(hex: 0x1F2328),
+        textSecondary: Color(hex: 0x656D76),
+        textAccent:    Color(hex: 0x0969DA),
+        separator:     Color(hex: 0xD0D7DE),
+        selection:     Color(hex: 0x0969DA).opacity(0.18),
+        waveform:      Color(hex: 0x1A7F37),
+        voice1:        Color(hex: 0x1A7F37),  // green
+        voice2:        Color(hex: 0x0969DA),  // blue
+        voice3:        Color(hex: 0xBC4C00),  // orange
+        peakGradient: [
+            Color(hex: 0x1A7F37), Color(hex: 0x0969DA),
+            Color(hex: 0x9A6700), Color(hex: 0xD1242F)
+        ],
+        peakCap:    Color(hex: 0xFFFFFF),
+        peakCapHot: Color(hex: 0xD1242F),
+        scrollerText: Color(hex: 0x8250DF),
+        star: Color(hex: 0xBF8700)
+    )
+
+    static let atomOneLight = AppTheme(
+        id: "atomOneLight", name: "Atom One Light",
+        windowBackground:     Color(hex: 0xFAFAFA),
+        panelBackground:      Color(hex: 0xF0F0F0),
+        visualizerBackground: Color(hex: 0x282C34),
+        textPrimary:   Color(hex: 0x383A42),
+        textSecondary: Color(hex: 0xA0A1A7),
+        textAccent:    Color(hex: 0x4078F2),
+        separator:     Color(hex: 0xE5E5E6),
+        selection:     Color(hex: 0x4078F2).opacity(0.18),
+        waveform:      Color(hex: 0x50A14F),
+        voice1:        Color(hex: 0x50A14F),  // green
+        voice2:        Color(hex: 0x4078F2),  // blue
+        voice3:        Color(hex: 0xE45649),  // red-orange
+        peakGradient: [
+            Color(hex: 0x50A14F), Color(hex: 0x0184BC),
+            Color(hex: 0xC18401), Color(hex: 0xE45649)
+        ],
+        peakCap:    Color(hex: 0xFAFAFA),
+        peakCapHot: Color(hex: 0xE45649),
+        scrollerText: Color(hex: 0xA626A4),
+        star: Color(hex: 0xC18401)
+    )
+
+    static let catppuccinLatte = AppTheme(
+        id: "catppuccinLatte", name: "Catppuccin Latte",
+        windowBackground:     Color(hex: 0xEFF1F5),
+        panelBackground:      Color(hex: 0xE6E9EF),
+        visualizerBackground: Color(hex: 0x4C4F69),
+        textPrimary:   Color(hex: 0x4C4F69),
+        textSecondary: Color(hex: 0x6C6F85),
+        textAccent:    Color(hex: 0x8839EF),
+        separator:     Color(hex: 0xCCD0DA),
+        selection:     Color(hex: 0x8839EF).opacity(0.20),
+        waveform:      Color(hex: 0x40A02B),
+        voice1:        Color(hex: 0x40A02B),  // green
+        voice2:        Color(hex: 0x1E66F5),  // blue
+        voice3:        Color(hex: 0xFE640B),  // peach
+        peakGradient: [
+            Color(hex: 0x40A02B), Color(hex: 0x179299),
+            Color(hex: 0xDF8E1D), Color(hex: 0xD20F39)
+        ],
+        peakCap:    Color(hex: 0xEFF1F5),
+        peakCapHot: Color(hex: 0xD20F39),
+        scrollerText: Color(hex: 0x8839EF),
+        star: Color(hex: 0xDF8E1D)
+    )
+
+    // MARK: - Dark themes (continued)
 
     static let monokai = AppTheme(
         id: "monokai", name: "Monokai",

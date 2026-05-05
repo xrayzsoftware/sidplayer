@@ -35,6 +35,7 @@ public final class AppState {
     // MARK: Theme
     public var theme: AppTheme = .systemDefault
     public var showScroller: Bool = true
+    public var showVisualizers: Bool = true
     public var allTabLimit: Int = 10_000
 
     // MARK: Catalog
@@ -94,6 +95,7 @@ public final class AppState {
     private static let favoritesKey = "favoriteIDs.v1"
     private static let themeKey     = "themeID.v1"
     private static let scrollerKey  = "showScroller.v1"
+    private static let vizKey       = "showVisualizers.v1"
     private static let allLimitKey  = "allTabLimit.v1"
 
     public init() {
@@ -103,6 +105,10 @@ public final class AppState {
         if UserDefaults.standard.object(forKey: Self.scrollerKey) != nil {
             showScroller = UserDefaults.standard.bool(forKey: Self.scrollerKey)
         }
+        if UserDefaults.standard.object(forKey: Self.vizKey) != nil {
+            showVisualizers = UserDefaults.standard.bool(forKey: Self.vizKey)
+        }
+        player.vizEnabled = showVisualizers
         let savedLimit = UserDefaults.standard.integer(forKey: Self.allLimitKey)
         if savedLimit > 0 { allTabLimit = savedLimit }
     }
@@ -116,6 +122,12 @@ public final class AppState {
     public func toggleScroller() {
         showScroller.toggle()
         UserDefaults.standard.set(showScroller, forKey: Self.scrollerKey)
+    }
+
+    public func toggleVisualizers() {
+        showVisualizers.toggle()
+        UserDefaults.standard.set(showVisualizers, forKey: Self.vizKey)
+        player.vizEnabled = showVisualizers
     }
 
     private func loadTheme() {

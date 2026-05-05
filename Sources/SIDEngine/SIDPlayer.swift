@@ -20,6 +20,9 @@ public final class SIDPlayer: @unchecked Sendable {
     /// voice engine failures cannot break the audible mix.
     public let voiceTaps: [VizTap]
     private let voiceEngines: [SIDPlayerEngine]
+    /// When false, the producer thread skips rendering the voice engines —
+    /// saves ~3% CPU when the per-voice waveform is hidden.
+    public var vizEnabled: Bool = true
 
     private let av = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
@@ -205,10 +208,13 @@ public final class SIDPlayer: @unchecked Sendable {
 
             // Drive voice engines for the same N samples, then fill voice taps
             // directly. Failures here are silently ignored — they're viz only,
-            // they cannot stall the audio ring write below.
-            for (i, ve) in voiceEngines.enumerated() {
-                let m = ve.render(into: voiceScratch[i], count: n)
-                if m > 0 { voiceTaps[i].append(voiceScratch[i], count: m) }
+            // they cannot stall the audio ring write below. Skipped entirely
+            // when visualizers are off, saving the per-engine CPU cost.
+            if vizEnabled {
+                for (i, ve) in voiceEngines.enumerated() {
+                    let m = ve.render(into: voiceScratch[i], count: n)
+                    if m > 0 { voiceTaps[i].append(voiceScratch[i], count: m) }
+                }
             }
 
             // Push main mix to the audio ring. This is the only thing the
