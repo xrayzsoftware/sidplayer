@@ -1,0 +1,51 @@
+name: SIDPlayer
+options:
+  bundleIdPrefix: com.sidplayer
+  deploymentTarget:
+    macOS: "14.0"
+  generateEmptyDirectories: true
+  groupSortPosition: top
+  xcodeVersion: "26.4"
+
+packages:
+  sidplayer:
+    path: .
+
+settings:
+  base:
+    SWIFT_VERSION: "5.9"
+    MACOSX_DEPLOYMENT_TARGET: "14.0"
+    GENERATE_INFOPLIST_FILE: YES
+    SWIFT_TREAT_WARNINGS_AS_ERRORS: NO
+    CLANG_ENABLE_MODULES: YES
+    ENABLE_USER_SCRIPT_SANDBOXING: NO
+
+targets:
+  SIDPlayer:
+    type: application
+    platform: macOS
+    deploymentTarget: "14.0"
+    sources:
+      - path: App
+        excludes:
+          - "**/.DS_Store"
+    dependencies:
+      - package: sidplayer
+        product: SIDEngine
+      - package: sidplayer
+        product: SIDCatalog
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.sidplayer.app
+        PRODUCT_NAME: "SID Player"
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        INFOPLIST_KEY_NSHumanReadableCopyright: ""
+        INFOPLIST_KEY_CFBundleDisplayName: "SID Player"
+        INFOPLIST_KEY_LSApplicationCategoryType: "public.app-category.music"
+        # Local-dev signing: ad-hoc, no team required.
+        CODE_SIGN_STYLE: Manual
+        CODE_SIGN_IDENTITY: "-"
+        DEVELOPMENT_TEAM: ""
+        ENABLE_HARDENED_RUNTIME: NO
+        # We're not in the App Sandbox during dev so we can poke at HVSC files anywhere.
+        ENABLE_APP_SANDBOX: NO

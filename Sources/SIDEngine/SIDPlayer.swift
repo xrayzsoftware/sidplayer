@@ -8,6 +8,10 @@ import AVFoundation
 public final class SIDPlayer: @unchecked Sendable {
     public let engine: SIDPlayerEngine
     public let sampleRate: Double
+    /// PCM tap for visualizers. Filled from the audio render callback as
+    /// samples are pushed to the speakers. Read by SwiftUI views via
+    /// `snapshotFloats(count:)`.
+    public let vizTap: VizTap
 
     private let av = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
@@ -20,6 +24,7 @@ public final class SIDPlayer: @unchecked Sendable {
         self.engine = SIDPlayerEngine()
         self.sampleRate = sampleRate
         self.ring = RingBuffer(capacity: ringCapacity)
+        self.vizTap = VizTap(capacity: 8192)
     }
 
     deinit {
@@ -96,7 +101,8 @@ public final class SIDPlayer: @unchecked Sendable {
                           userInfo: [NSLocalizedDescriptionKey: "audio format init failed"])
         }
 
-        let ringRef = ring  // captured by reference (class)
+        let ringRef = ring     // captured by reference (class)
+        let vizRef = vizTap
         let node = AVAudioSourceNode(format: format) { _, _, frameCount, abl -> OSStatus in
             let bufList = UnsafeMutableAudioBufferListPointer(abl)
             guard let dest = bufList[0].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
@@ -112,6 +118,10 @@ public final class SIDPlayer: @unchecked Sendable {
             if read < n {
                 dest.advanced(by: read).update(repeating: 0, count: n - read)
             }
+
+            // Mirror what we just played to the visualizer tap. Lock contention
+            // here is brief (~Nμs); UI reads via snapshotFloats.
+            if read > 0 { vizRef.append(scratch, count: read) }
             return noErr
         }
         av.attach(node)

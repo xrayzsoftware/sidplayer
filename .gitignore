@@ -1,9 +1,10 @@
 .build/
 .swiftpm/
 Package.resolved
-*.xcodeproj/xcuserdata/
-*.xcodeproj/project.xcworkspace/xcuserdata/
 .DS_Store
+
+# Xcode project is generated from project.yml via `xcodegen generate`.
+*.xcodeproj/
 
 # HVSC redistribution terms vary per tune — keep fixtures out of git.
 Tests/Fixtures/
