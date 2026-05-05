@@ -21,18 +21,19 @@ struct InfoBar: View {
         VStack(alignment: .leading, spacing: 2) {
             Text(label)
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(state.theme.textSecondary)
                 .tracking(0.5)
             Text(value)
                 .font(.system(size: 13, weight: .medium))
+                .foregroundStyle(state.theme.textPrimary)
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
         .frame(maxWidth: .infinity, alignment: .leading)
         .overlay(
             Rectangle().frame(width: 1)
-                .foregroundColor(Color(nsColor: .separatorColor))
-                .opacity(0.5),
+                .foregroundColor(state.theme.separator)
+                .opacity(0.6),
             alignment: .trailing
         )
     }

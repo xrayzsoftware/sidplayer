@@ -1,31 +1,50 @@
 import SwiftUI
 import SIDCatalog
 
+/// What auto-advance will play next: the next subtune of the current tune,
+/// or — when on the last subtune / single-subtune tunes — the next track in
+/// the visible list.
 struct QueueBar: View {
     @Environment(AppState.self) private var state
 
     var body: some View {
-        let row: TuneRow? = state.currentTuneID.flatMap { id in
-            try? state.catalog?.tune(id: id)
-        }
-
         VStack(alignment: .leading, spacing: 2) {
-            Text("QUEUE")
+            Text("UP NEXT")
                 .font(.system(size: 9, weight: .semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(state.theme.textSecondary)
                 .tracking(0.5)
             HStack(spacing: 6) {
-                Image(systemName: "play.fill")
+                Image(systemName: "forward.fill")
                     .font(.system(size: 9))
-                    .foregroundStyle(.green)
-                Text(row?.title ?? "—")
+                    .foregroundStyle(state.theme.textSecondary)
+                Text(upNextText)
                     .font(.system(size: 12))
-                    .foregroundStyle(.green)
+                    .foregroundStyle(state.theme.textPrimary.opacity(0.85))
                     .lineLimit(1)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(.horizontal, 12).padding(.vertical, 6)
-        .background(Color(nsColor: .controlBackgroundColor))
+        .background(state.theme.panelBackground)
+    }
+
+    private var upNextText: String {
+        if state.subtuneCount > 1 && state.currentSubtune < state.subtuneCount {
+            return "sub \(state.currentSubtune + 1)/\(state.subtuneCount) — \(currentTitle)"
+        }
+        if let id = state.currentTuneID,
+           let idx = state.rows.firstIndex(where: { $0.id == id }),
+           !state.rows.isEmpty {
+            let next = (idx + 1) % state.rows.count
+            let r = state.rows[next].row
+            return "\(r.title ?? "—") — \(r.author ?? "—")"
+        }
+        return "—"
+    }
+
+    private var currentTitle: String {
+        guard let id = state.currentTuneID,
+              let row = try? state.catalog?.tune(id: id) else { return "—" }
+        return row.title ?? "—"
     }
 }

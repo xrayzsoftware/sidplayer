@@ -7,18 +7,15 @@ struct ContentView: View {
         @Bindable var state = state
 
         VStack(spacing: 0) {
-            FilterBar(text: $state.searchQuery)
-            Divider()
-
             if state.bootstrap == .ready || !state.rows.isEmpty {
                 NowPlayingHeader()
                     .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
 
                 HStack(spacing: 8) {
-                    WaveformView(tap: state.player.vizTap)
-                    WaterfallSpectrumView(tap: state.player.vizTap)
+                    WaveformView(taps: state.player.voiceTaps)
+                    PeakMeterView(tap: state.player.vizTap)
                 }
-                .frame(height: 80)
+                .frame(height: 96)
                 .padding(.horizontal, 12)
 
                 InfoBar()
@@ -31,7 +28,43 @@ struct ContentView: View {
 
                 Divider()
 
-                TrackListView()
+                if state.showScroller {
+                    STILScrollerView()
+                        .frame(height: 28)
+                    Divider()
+                }
+
+                if let err = state.lastError {
+                    HStack(spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .foregroundStyle(.orange)
+                        Text(err)
+                            .font(.caption)
+                            .foregroundStyle(.primary)
+                            .lineLimit(2)
+                        Spacer()
+                        Button("Settings") { state.showSettingsSheet = true }
+                            .buttonStyle(.borderless)
+                            .controlSize(.small)
+                        Button {
+                            state.lastError = nil
+                        } label: { Image(systemName: "xmark") }
+                            .buttonStyle(.borderless)
+                    }
+                    .padding(.horizontal, 12).padding(.vertical, 6)
+                    .background(Color.orange.opacity(0.12))
+                }
+
+                TabBarView()
+                Divider()
+                FilterBar(text: $state.searchQuery)
+                Divider()
+
+                if state.browseMode == .browse {
+                    BrowseView()
+                } else {
+                    TrackListView()
+                }
 
                 Divider()
                 QueueBar()
@@ -40,7 +73,20 @@ struct ContentView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(state.theme.windowBackground)
+        .toolbar {
+            ToolbarItem(placement: .primaryAction) {
+                Button {
+                    state.showSettingsSheet = true
+                } label: {
+                    Image(systemName: "gearshape")
+                }
+                .help("Library settings")
+            }
+        }
+        .sheet(isPresented: $state.showSettingsSheet) {
+            SettingsSheet()
+        }
         .task(id: state.searchQuery) {
             try? await Task.sleep(nanoseconds: 150_000_000)
             try? await state.refreshSearch()

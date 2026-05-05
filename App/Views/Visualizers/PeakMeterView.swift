@@ -1,0 +1,167 @@
+import SwiftUI
+import Accelerate
+import SIDEngine
+
+private let kFFTSize = 1024
+private let kFFTBins = kFFTSize / 2
+private let kBands   = 40
+
+/// Reference-typed FFT state so we can mutate inside the Canvas closure
+/// without triggering SwiftUI re-renders.
+private final class PeakMeterState {
+    /// Smoothed instantaneous magnitude per band, 0...1.
+    var bandLevels = [Float](repeating: 0, count: kBands)
+    /// Decaying peak hold per band, 0...1.
+    var peakLevels = [Float](repeating: 0, count: kBands)
+
+    private let setup: FFTSetup
+    private var realIn = [Float](repeating: 0, count: kFFTSize)
+    private var imagIn = [Float](repeating: 0, count: kFFTSize)
+    private var window = [Float](repeating: 0, count: kFFTSize)
+    private var binIdx: [Int] = []
+
+    init() {
+        setup = vDSP_create_fftsetup(vDSP_Length(log2(Float(kFFTSize))), FFTRadix(kFFTRadix2))!
+        vDSP_hann_window(&window, vDSP_Length(kFFTSize), Int32(vDSP_HANN_NORM))
+
+        let minHz: Float = 50
+        let maxHz: Float = 12_000
+        let sampleRate: Float = 44_100
+        binIdx = (0..<kBands).map { i in
+            let t = Float(i) / Float(kBands - 1)
+            let hz = minHz * powf(maxHz / minHz, t)
+            let b = Int((hz * Float(kFFTSize) / sampleRate).rounded())
+            return min(max(b, 1), kFFTBins - 1)
+        }
+    }
+
+    deinit { vDSP_destroy_fftsetup(setup) }
+
+    /// Updates `bandLevels` (smoothed) and `peakLevels` (decaying caps).
+    func tick(tap: VizTap) {
+        let snap = tap.snapshotFloats(count: kFFTSize)
+        guard snap.count == kFFTSize else { return }
+
+        vDSP_vmul(snap, 1, window, 1, &realIn, 1, vDSP_Length(kFFTSize))
+        for i in 0..<kFFTSize { imagIn[i] = 0 }
+
+        let log2n = vDSP_Length(log2(Float(kFFTSize)))
+        realIn.withUnsafeMutableBufferPointer { rb in
+            imagIn.withUnsafeMutableBufferPointer { ib in
+                var sc = DSPSplitComplex(realp: rb.baseAddress!, imagp: ib.baseAddress!)
+                vDSP_fft_zrip(setup, &sc, 1, log2n, FFTDirection(FFT_FORWARD))
+            }
+        }
+
+        for c in 0..<kBands {
+            let bin = binIdx[c]
+            // Average a small neighbourhood for visual stability.
+            var sum: Float = 0
+            var n: Int = 0
+            for k in max(1, bin - 1)...min(kFFTBins - 1, bin + 1) {
+                let re = realIn[k]; let im = imagIn[k]
+                sum += sqrtf(re*re + im*im)
+                n += 1
+            }
+            let mag = sum / Float(max(n, 1))
+
+            // Log-compress to 0..1.
+            let db = 20 * log10f(max(mag * 0.0005, 1e-6))
+            let v = max(0, min(1, (db + 80) / 80))
+
+            // Bar: snappy attack, slow decay.
+            if v > bandLevels[c] {
+                bandLevels[c] = 0.55 * bandLevels[c] + 0.45 * v
+            } else {
+                bandLevels[c] = max(v, bandLevels[c] - 0.040)
+            }
+
+            // Peak: jumps up on a new max, drops slowly otherwise.
+            if bandLevels[c] >= peakLevels[c] {
+                peakLevels[c] = bandLevels[c]
+            } else {
+                peakLevels[c] = max(0, peakLevels[c] - 0.012)
+            }
+        }
+    }
+}
+
+struct PeakMeterView: View {
+    let tap: VizTap
+    @Environment(AppState.self) private var state
+
+    @State private var meter = PeakMeterState()
+    @State private var tick: UInt64 = 0
+    private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
+
+    var body: some View {
+        let theme = state.theme
+        Canvas { ctx, size in
+            _ = tick
+            meter.tick(tap: tap)
+
+            ctx.fill(Path(CGRect(origin: .zero, size: size)),
+                     with: .color(theme.visualizerBackground))
+
+            let padTop:    CGFloat = 18
+            let padBottom: CGFloat = 4
+            let padX:      CGFloat = 8
+            let area = CGRect(
+                x: padX,
+                y: padTop,
+                width: size.width - padX * 2,
+                height: size.height - padTop - padBottom
+            )
+            let bandW = area.width / CGFloat(kBands)
+            let barW = max(1.5, bandW * 0.9)
+
+            for c in 0..<kBands {
+                let x  = area.minX + CGFloat(c) * bandW + (bandW - barW) / 2
+                let level = CGFloat(meter.bandLevels[c])
+                let peak  = CGFloat(meter.peakLevels[c])
+
+                let barH = level * area.height
+                let bar = CGRect(
+                    x: x,
+                    y: area.maxY - barH,
+                    width: barW,
+                    height: max(0, barH)
+                )
+                if bar.height > 0.5 {
+                    let stops = theme.peakGradient
+                    ctx.fill(
+                        Path(bar),
+                        with: .linearGradient(
+                            Gradient(stops: [
+                                .init(color: stops[0], location: 0.0),
+                                .init(color: stops[1], location: 0.55),
+                                .init(color: stops[2], location: 0.80),
+                                .init(color: stops[3], location: 1.0),
+                            ]),
+                            startPoint: CGPoint(x: x, y: area.maxY),
+                            endPoint:   CGPoint(x: x, y: area.minY)
+                        )
+                    )
+                }
+
+                // Peak cap
+                let py = area.maxY - peak * area.height
+                let cap = CGRect(x: x, y: py - 1, width: barW, height: 2)
+                let capColor: Color = peak > 0.9 ? theme.peakCapHot : theme.peakCap
+                ctx.fill(Path(cap), with: .color(capColor))
+            }
+
+            ctx.draw(
+                Text("PEAKS")
+                    .font(.system(size: 9, weight: .semibold))
+                    .foregroundColor(theme.textSecondary.opacity(0.85))
+                    .tracking(0.5),
+                at: CGPoint(x: 8, y: 10),
+                anchor: .topLeading
+            )
+        }
+        .background(theme.visualizerBackground)
+        .clipShape(RoundedRectangle(cornerRadius: 4))
+        .onReceive(timer) { _ in tick &+= 1 }
+    }
+}
