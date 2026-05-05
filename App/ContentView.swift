@@ -7,11 +7,6 @@ struct ContentView: View {
         @Bindable var state = state
 
         VStack(spacing: 0) {
-            // Reserve space for the traffic lights (window uses .hiddenTitleBar
-            // so SwiftUI content extends to the very top — without padding,
-            // header content slides under the close/min/zoom buttons).
-            Color.clear.frame(height: 28)
-
             if state.bootstrap == .ready || !state.rows.isEmpty {
                 NowPlayingHeader()
                     .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)

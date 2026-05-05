@@ -126,6 +126,13 @@ public final class SIDPlayerEngine {
     /// Raw CIA1 Timer A value programmed by the tune (0 if VBI / not set yet).
     public var cia1TimerA: Int { bridge.cia1TimerA() }
 
+    /// Provides C64 system ROMs to the engine. Many RSID tunes call into
+    /// KERNAL routines and won't play correctly without these. Pass nil
+    /// to clear (uses internal fallback patches; some tunes will still fail).
+    public func setROMs(kernal: Data?, basic: Data?, chargen: Data?) {
+        bridge.setKernalROM(kernal, basicROM: basic, chargenROM: chargen)
+    }
+
     /// Computes the play-rate multiplier relative to the video frame rate.
     /// VBI-driven tunes return 1; CIA-driven tunes return 2, 4, etc.
     public func playSpeedMultiplier() -> Int {

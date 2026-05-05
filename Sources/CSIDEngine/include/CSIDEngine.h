@@ -70,6 +70,14 @@ typedef NS_ENUM(NSInteger, CSIDModel) {
 /// if VBI-driven. Convertible to a play-rate multiplier of the video frame.
 - (NSInteger)cia1TimerA;
 
+/// Loads C64 system ROMs (KERNAL/BASIC/CHARGEN) into the engine. Required
+/// for many RSID tunes that call into KERNAL routines. Pass nil for any
+/// ROM you don't have (fewer tunes will work). Each NSData should hold the
+/// raw ROM bytes (8192/8192/4096 respectively).
+- (void)setKernalROM:(nullable NSData *)kernal
+            basicROM:(nullable NSData *)basic
+          chargenROM:(nullable NSData *)chargen;
+
 - (void)stop;
 @end
 

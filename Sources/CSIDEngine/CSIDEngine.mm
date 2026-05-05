@@ -191,6 +191,14 @@ static NSError *makeError(NSString *msg) {
     return (NSInteger)_engine->getCia1TimerA();
 }
 
+- (void)setKernalROM:(NSData *)kernal basicROM:(NSData *)basic chargenROM:(NSData *)chargen {
+    if (!_engine) return;
+    const uint8_t *k = kernal  ? (const uint8_t *)kernal.bytes  : nullptr;
+    const uint8_t *b = basic   ? (const uint8_t *)basic.bytes   : nullptr;
+    const uint8_t *c = chargen ? (const uint8_t *)chargen.bytes : nullptr;
+    _engine->setRoms(k, b, c);
+}
+
 - (void)stop {
     if (_engine) _engine->load(nullptr);
     _scratch.clear();
