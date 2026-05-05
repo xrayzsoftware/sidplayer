@@ -25,21 +25,20 @@ public struct Songlengths: Sendable {
 
     public init(text: String) {
         var out: [MD5: [Int]] = [:]
-        out.reserveCapacity(60_000)  // HVSC #82 has ~55k entries
+        out.reserveCapacity(60_000)  // HVSC #82+ has ~55k entries
 
-        var idx = text.startIndex
-        let end = text.endIndex
-        while idx < end {
-            let lineEnd = text[idx...].firstIndex(of: "\n") ?? end
-            let line = text[idx..<lineEnd]
-            idx = lineEnd < end ? text.index(after: lineEnd) : end
-
-            if line.isEmpty || line.first == ";" { continue }
-            guard let eq = line.firstIndex(of: "=") else { continue }
+        // `enumerateLines` correctly splits on LF, CR, and CRLF. The real
+        // HVSC Songlengths.md5 ships with CRLF; in Swift's Character model
+        // CRLF is a single grapheme cluster, so `firstIndex(of: "\n")`
+        // returns nil for the entire file.
+        text.enumerateLines { rawLine, _ in
+            let line = Substring(rawLine)
+            if line.isEmpty || line.first == ";" || line.first == "[" { return }
+            guard let eq = line.firstIndex(of: "=") else { return }
             let md5 = line[..<eq].lowercased()
-            guard md5.count == 32 else { continue }
+            guard md5.count == 32 else { return }
 
-            let lengths = Self.parseDurations(line[text.index(after: eq)...])
+            let lengths = Self.parseDurations(line[line.index(after: eq)...])
             if !lengths.isEmpty { out[md5] = lengths }
         }
         self.lengthsByMD5 = out

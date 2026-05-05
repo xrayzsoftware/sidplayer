@@ -38,6 +38,23 @@ final class SonglengthsTests: XCTestCase {
         XCTAssertNil(s.length(md5: "missing", subtune: 0))
     }
 
+    func testHandlesCRLFLineEndings() {
+        // Real HVSC Songlengths.md5 ships with Windows-style CRLF endings.
+        // In Swift's Character model CRLF is one grapheme — splitting on \n
+        // alone matches nothing.
+        let crlf = "[Database]\r\n; /A.sid\r\n6d019ecba831a9f853675aac29a61c10=3:05\r\n; /B.sid\r\nabcdef0123456789abcdef0123456789=1:00\r\n"
+        let s = Songlengths(text: crlf)
+        XCTAssertEqual(s.lengthsByMD5.count, 2)
+        XCTAssertEqual(s.lengthsByMD5["6d019ecba831a9f853675aac29a61c10"], [185_000])
+        XCTAssertEqual(s.lengthsByMD5["abcdef0123456789abcdef0123456789"], [60_000])
+    }
+
+    func testIgnoresDatabaseHeader() {
+        let withHeader = "[Database]\n6d019ecba831a9f853675aac29a61c10=3:05\n"
+        let s = Songlengths(text: withHeader)
+        XCTAssertEqual(s.lengthsByMD5.count, 1)
+    }
+
     func testParseDurationCases() {
         XCTAssertEqual(Songlengths.parseDuration("3:05"),       185_000)
         XCTAssertEqual(Songlengths.parseDuration("12:34"),      754_000)

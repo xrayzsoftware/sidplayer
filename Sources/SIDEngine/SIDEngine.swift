@@ -118,6 +118,11 @@ public final class SIDPlayerEngine {
         bridge.currentTime()
     }
 
+    /// Mute/unmute one of the three SID voices (0, 1, 2). Effective immediately.
+    public func setVoiceMuted(_ voice: Int, muted: Bool) {
+        bridge.setVoiceMuted(voice, muted: muted)
+    }
+
     public func stop() {
         bridge.stop()
     }

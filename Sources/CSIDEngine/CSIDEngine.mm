@@ -180,6 +180,12 @@ static NSError *makeError(NSString *msg) {
     return (NSTimeInterval)_engine->timeMs() / 1000.0;
 }
 
+- (void)setVoiceMuted:(NSInteger)voice muted:(BOOL)muted {
+    if (!_engine || voice < 0 || voice > 2) return;
+    // libsidplayfp's mute(): enable=true unmutes, enable=false mutes.
+    _engine->mute(0, (unsigned)voice, !muted);
+}
+
 - (void)stop {
     if (_engine) _engine->load(nullptr);
     _scratch.clear();

@@ -185,6 +185,51 @@ public final class CatalogDB {
         }
     }
 
+    /// Subset of `path` immediately under `prefix`, split into subdirectory
+    /// names and direct file rows. `prefix` should be either empty (root)
+    /// or end with no trailing slash (e.g. `"MUSICIANS/H/Hubbard_Rob"`).
+    public func browse(prefix: String) throws -> (dirs: [String], tunes: [TuneRow]) {
+        let p = prefix.isEmpty ? "" : prefix + "/"
+        return try dbWriter.read { db in
+            let rows = try TuneRow
+                .filter(p.isEmpty ? Column("path").like("%") : Column("path").like("\(p)%"))
+                .order(Column("path"))
+                .fetchAll(db)
+
+            var dirSet: [String: Bool] = [:]   // ordered insertion via String dict
+            var dirsList: [String] = []
+            var tunes: [TuneRow] = []
+            tunes.reserveCapacity(rows.count)
+
+            for r in rows {
+                let rest = String(r.path.dropFirst(p.count))
+                if let slash = rest.firstIndex(of: "/") {
+                    let dir = String(rest[..<slash])
+                    if dirSet[dir] == nil {
+                        dirSet[dir] = true
+                        dirsList.append(dir)
+                    }
+                } else {
+                    tunes.append(r)
+                }
+            }
+            return (dirsList.sorted(by: { $0.localizedStandardCompare($1) == .orderedAscending }),
+                    tunes)
+        }
+    }
+
+    /// Bulk fetch by IDs in a single query, preserving order of input.
+    public func tunes(ids: [Int64]) throws -> [TuneRow] {
+        guard !ids.isEmpty else { return [] }
+        return try dbWriter.read { db in
+            let rows = try TuneRow.filter(ids.contains(Column("id"))).fetchAll(db)
+            // Preserve input order
+            var byID: [Int64: TuneRow] = [:]
+            for r in rows { if let id = r.id { byID[id] = r } }
+            return ids.compactMap { byID[$0] }
+        }
+    }
+
     /// Full-text search across title/author/path.
     /// Empty/whitespace query returns the first `limit` rows ordered by author/title.
     public func search(_ query: String, limit: Int = 200) throws -> [TuneRow] {

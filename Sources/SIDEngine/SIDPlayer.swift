@@ -3,33 +3,41 @@ import AVFoundation
 
 /// High-level playback controller. Wraps `SIDPlayerEngine` with:
 ///  - a producer thread that calls the SID emulator off the audio render thread
-///  - an `AVAudioEngine` graph that drains a `RingBuffer`
+///  - an `AVAudioEngine` graph that drains a `RingBuffer` and feeds a `VizTap`
 ///  - play/pause + subtune navigation
 public final class SIDPlayer: @unchecked Sendable {
     public let engine: SIDPlayerEngine
     public let sampleRate: Double
-    /// PCM tap for visualizers. Filled from the audio render callback as
-    /// samples are pushed to the speakers. Read by SwiftUI views via
-    /// `snapshotFloats(count:)`.
+
+    /// PCM tap for visualizers, filled from the audio render callback so the
+    /// data is in sync with what the speakers play.
     public let vizTap: VizTap
+
+    /// Per-voice taps (length 3). Filled from a producer-side render of three
+    /// extra libsidplayfp engines that mirror the main one with two voices
+    /// muted each. They run AHEAD of audio output by the ring buffer's
+    /// fullness (~93 ms with a 4k-sample ring). Audio path is independent —
+    /// voice engine failures cannot break the audible mix.
+    public let voiceTaps: [VizTap]
+    private let voiceEngines: [SIDPlayerEngine]
 
     private let av = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
-    private var ring: RingBuffer
+    private let ring: RingBuffer
     private var producer: Thread?
     private var producerStop = false
     private var paused = true
 
-    public init(sampleRate: Double = 44_100, ringCapacity: Int = 1 << 15 /* 32k samples ≈ 0.74s */) {
-        self.engine = SIDPlayerEngine()
-        self.sampleRate = sampleRate
-        self.ring = RingBuffer(capacity: ringCapacity)
-        self.vizTap = VizTap(capacity: 8192)
+    public init(sampleRate: Double = 44_100, ringCapacity: Int = 4096) {
+        self.engine        = SIDPlayerEngine()
+        self.sampleRate    = sampleRate
+        self.ring          = RingBuffer(capacity: ringCapacity)
+        self.vizTap        = VizTap(capacity: 8192)
+        self.voiceEngines  = (0..<3).map { _ in SIDPlayerEngine() }
+        self.voiceTaps     = (0..<3).map { _ in VizTap(capacity: 8192) }
     }
 
-    deinit {
-        stop()
-    }
+    deinit { stop() }
 
     public var info: TuneInfo? { engine.info }
     public var currentTime: TimeInterval { engine.currentTime }
@@ -42,6 +50,18 @@ public final class SIDPlayer: @unchecked Sendable {
         try engine.load(path: path)
         let start = engine.info?.startSong ?? 1
         try engine.start(song: start, sampleRate: Int(sampleRate))
+
+        // Best-effort viz engine setup. Failures here are non-fatal — the
+        // main audio path keeps working with empty voice taps.
+        for (i, ve) in voiceEngines.enumerated() {
+            do {
+                try ve.load(path: path)
+                try ve.start(song: start, sampleRate: Int(sampleRate))
+                for v in 0..<3 { ve.setVoiceMuted(v, muted: v != i) }
+            } catch {
+                // ignore — viz only
+            }
+        }
     }
 
     public func play() throws {
@@ -66,10 +86,16 @@ public final class SIDPlayer: @unchecked Sendable {
         ring.clear()
     }
 
+    public func setVolume(_ v: Float) {
+        av.mainMixerNode.outputVolume = max(0, min(1, v))
+    }
+    public var volume: Float { av.mainMixerNode.outputVolume }
+
     public func nextSong() throws {
         try stopProducer()
         ring.clear()
         try engine.nextSong()
+        syncVoiceEngines(toSong: engine.currentSong)
         if !paused { startProducer() }
     }
 
@@ -77,6 +103,7 @@ public final class SIDPlayer: @unchecked Sendable {
         try stopProducer()
         ring.clear()
         try engine.previousSong()
+        syncVoiceEngines(toSong: engine.currentSong)
         if !paused { startProducer() }
     }
 
@@ -84,7 +111,15 @@ public final class SIDPlayer: @unchecked Sendable {
         try stopProducer()
         ring.clear()
         try engine.select(song: song)
+        syncVoiceEngines(toSong: song)
         if !paused { startProducer() }
+    }
+
+    private func syncVoiceEngines(toSong song: Int) {
+        for (i, ve) in voiceEngines.enumerated() {
+            try? ve.select(song: song)
+            for v in 0..<3 { ve.setVoiceMuted(v, muted: v != i) }
+        }
     }
 
     // MARK: - Audio graph
@@ -101,8 +136,8 @@ public final class SIDPlayer: @unchecked Sendable {
                           userInfo: [NSLocalizedDescriptionKey: "audio format init failed"])
         }
 
-        let ringRef = ring     // captured by reference (class)
-        let vizRef = vizTap
+        let ringRef = ring
+        let tapRef  = vizTap
         let node = AVAudioSourceNode(format: format) { _, _, frameCount, abl -> OSStatus in
             let bufList = UnsafeMutableAudioBufferListPointer(abl)
             guard let dest = bufList[0].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
@@ -112,16 +147,9 @@ public final class SIDPlayer: @unchecked Sendable {
             defer { scratch.deallocate() }
 
             let read = ringRef.read(scratch, count: n)
-            for i in 0..<read {
-                dest[i] = Float(scratch[i]) / 32768.0
-            }
-            if read < n {
-                dest.advanced(by: read).update(repeating: 0, count: n - read)
-            }
-
-            // Mirror what we just played to the visualizer tap. Lock contention
-            // here is brief (~Nμs); UI reads via snapshotFloats.
-            if read > 0 { vizRef.append(scratch, count: read) }
+            for i in 0..<read { dest[i] = Float(scratch[i]) / 32768.0 }
+            if read < n { dest.advanced(by: read).update(repeating: 0, count: n - read) }
+            if read > 0 { tapRef.append(scratch, count: read) }
             return noErr
         }
         av.attach(node)
@@ -147,7 +175,6 @@ public final class SIDPlayer: @unchecked Sendable {
     private func stopProducer() throws {
         producerStop = true
         producer?.cancel()
-        // Spin briefly waiting for thread to exit. Thread joins via running flag.
         var spins = 0
         while let t = producer, !t.isFinished, spins < 50 {
             Thread.sleep(forTimeInterval: 0.005)
@@ -157,22 +184,35 @@ public final class SIDPlayer: @unchecked Sendable {
     }
 
     private func producerLoop() {
-        let chunk = 2048
+        let chunk = 1024
         let scratch = UnsafeMutablePointer<Int16>.allocate(capacity: chunk)
-        defer { scratch.deallocate() }
+        let v0 = UnsafeMutablePointer<Int16>.allocate(capacity: chunk)
+        let v1 = UnsafeMutablePointer<Int16>.allocate(capacity: chunk)
+        let v2 = UnsafeMutablePointer<Int16>.allocate(capacity: chunk)
+        defer { [scratch, v0, v1, v2].forEach { $0.deallocate() } }
+        let voiceScratch = [v0, v1, v2]
 
         while !producerStop {
-            // Stay ahead by ~half the ring; sleep otherwise.
             if ring.freeSpace < chunk {
                 Thread.sleep(forTimeInterval: 0.002)
                 continue
             }
             let n = engine.render(into: scratch, count: chunk)
             if n == 0 {
-                // Engine drained or errored — back off briefly so we don't busy-loop.
                 Thread.sleep(forTimeInterval: 0.010)
                 continue
             }
+
+            // Drive voice engines for the same N samples, then fill voice taps
+            // directly. Failures here are silently ignored — they're viz only,
+            // they cannot stall the audio ring write below.
+            for (i, ve) in voiceEngines.enumerated() {
+                let m = ve.render(into: voiceScratch[i], count: n)
+                if m > 0 { voiceTaps[i].append(voiceScratch[i], count: m) }
+            }
+
+            // Push main mix to the audio ring. This is the only thing the
+            // audio path depends on.
             var written = 0
             while written < n && !producerStop {
                 let w = ring.write(scratch.advanced(by: written), count: n - written)

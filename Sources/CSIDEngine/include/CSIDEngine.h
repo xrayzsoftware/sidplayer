@@ -62,6 +62,10 @@ typedef NS_ENUM(NSInteger, CSIDModel) {
 /// Current playback position, seconds since start of the active song.
 - (NSTimeInterval)currentTime;
 
+/// Mute / unmute one of the three SID voices (0, 1, or 2). Takes effect
+/// immediately. Pass NO to re-enable. Only valid after startSong:.
+- (void)setVoiceMuted:(NSInteger)voice muted:(BOOL)muted;
+
 - (void)stop;
 @end
 
