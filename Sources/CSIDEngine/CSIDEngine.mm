@@ -19,7 +19,11 @@
     SIDLiteBuilder *_builder;
     std::vector<short> _scratch;     // leftover samples from last play() call
     size_t          _scratchHead;    // next sample to consume from _scratch
+    NSInteger       _sampleRate;     // last sample rate passed to startSong
+    NSInteger       _currentSong;    // 1-indexed; 0 = nothing started
 }
+
+@synthesize currentSong = _currentSong;
 
 static NSError *makeError(NSString *msg) {
     return [NSError errorWithDomain:@"CSIDEngine"
@@ -33,6 +37,8 @@ static NSError *makeError(NSString *msg) {
         _tune = nullptr;
         _builder = nullptr;
         _scratchHead = 0;
+        _sampleRate = 0;
+        _currentSong = 0;
     }
     return self;
 }
@@ -121,7 +127,17 @@ static NSError *makeError(NSString *msg) {
 
     _scratch.clear();
     _scratchHead = 0;
+    _sampleRate = sampleRate;
+    _currentSong = songNum;
     return YES;
+}
+
+- (BOOL)selectSong:(NSInteger)songNum error:(NSError **)error {
+    if (_sampleRate == 0) {
+        if (error) *error = makeError(@"selectSong called before startSong:sampleRate:");
+        return NO;
+    }
+    return [self startSong:songNum sampleRate:_sampleRate error:error];
 }
 
 - (NSInteger)renderFrames:(int16_t *)buffer count:(NSInteger)frameCount {
@@ -160,6 +176,7 @@ static NSError *makeError(NSString *msg) {
     if (_engine) _engine->load(nullptr);
     _scratch.clear();
     _scratchHead = 0;
+    _currentSong = 0;
 }
 
 @end

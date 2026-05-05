@@ -35,6 +35,11 @@ let package = Package(
             dependencies: ["SIDEngine"],
             path: "Sources/sidspike"
         ),
+        .testTarget(
+            name: "SIDEngineTests",
+            dependencies: ["SIDEngine"],
+            path: "Tests/SIDEngineTests"
+        ),
     ],
     cxxLanguageStandard: .cxx17
 )

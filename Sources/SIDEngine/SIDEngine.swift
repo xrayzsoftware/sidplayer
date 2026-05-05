@@ -85,6 +85,24 @@ public final class SIDPlayerEngine {
         try bridge.startSong(song, sampleRate: sampleRate)
     }
 
+    public func select(song: Int) throws {
+        try bridge.selectSong(song)
+    }
+
+    public var currentSong: Int { bridge.currentSong }
+
+    public func nextSong() throws {
+        guard let info, currentSong > 0 else { return }
+        let next = currentSong >= info.songCount ? 1 : currentSong + 1
+        try select(song: next)
+    }
+
+    public func previousSong() throws {
+        guard let info, currentSong > 0 else { return }
+        let prev = currentSong <= 1 ? info.songCount : currentSong - 1
+        try select(song: prev)
+    }
+
     /// Renders mono Int16 PCM. Returns frames written.
     public func render(into buffer: UnsafeMutablePointer<Int16>, count: Int) -> Int {
         bridge.renderFrames(buffer, count: count)

@@ -41,6 +41,14 @@ typedef NS_ENUM(NSInteger, CSIDModel) {
        sampleRate:(NSInteger)sampleRate
             error:(NSError * _Nullable * _Nullable)error;
 
+/// Switch to a different sub-song, keeping the previously configured sample rate.
+/// Resets playback position to zero. Requires startSong:sampleRate: was called first.
+- (BOOL)selectSong:(NSInteger)songNum
+             error:(NSError * _Nullable * _Nullable)error;
+
+/// Currently selected sub-song (1-indexed). 0 if no song has been started.
+@property (nonatomic, readonly) NSInteger currentSong;
+
 /// Renders up to `frameCount` mono int16 frames into `buffer`.
 /// Returns frames actually written (0 indicates engine stop / error).
 - (NSInteger)renderFrames:(int16_t *)buffer count:(NSInteger)frameCount;
