@@ -14,7 +14,7 @@ Built on [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) for cycle-
 - **Three-tab catalog browser**: All (1000-row preview, FTS5 full-text search), Favorites (★ persisted via UserDefaults), Browse (HVSC directory tree with breadcrumb navigation).
 - **Sortable, themed track list** with title, composer, year, subtune count, and duration columns.
 - **Per-voice oscilloscope** — three additional libsidplayfp instances run in lockstep with the main engine, each with two voices muted, feeding three colored waveform traces. Audio path is independent so a viz-engine failure can't break sound.
-- **Winamp-style 40-band peak meter** with vDSP FFT, log-spaced bands from 50 Hz to 12 kHz, and decaying peak caps.
+- **Cyclic secondary visualizer** — toggle between a Winamp-style 40-band peak meter, a scrolling FFT waterfall, and a phosphor-persistence oscilloscope. All vDSP-backed, log-spaced from 50 Hz to 12 kHz, and themed.
 - **STIL scroller** — HVSC's annotations (sample sources, composer notes, "reused in Wizball" trivia) scroll right-to-left in your theme's accent color, locked to the display refresh.
 - **Per-voice mute** — V1/V2/V3 toggles in the transport bar mute individual SID voices.
 - **Subtune navigation** — smart prev/next: cycles within a multi-subtune tune, jumps between tracks for single-subtune tunes. Auto-advances at song-length end.
