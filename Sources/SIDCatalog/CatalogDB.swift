@@ -65,6 +65,38 @@ public struct LengthRow: Codable, FetchableRecord, PersistableRecord, Equatable,
     }
 }
 
+public struct Playlist: Codable, FetchableRecord, MutablePersistableRecord, Equatable, Sendable, Identifiable {
+    public var id: Int64?
+    public var name: String
+    public var createdAt: Date
+
+    public static let databaseTableName = "playlists"
+
+    public init(id: Int64? = nil, name: String, createdAt: Date = Date()) {
+        self.id = id
+        self.name = name
+        self.createdAt = createdAt
+    }
+
+    public mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+}
+
+public struct PlaylistTrack: Codable, FetchableRecord, PersistableRecord, Equatable, Sendable {
+    public var playlistId: Int64
+    public var position: Int            // 0-indexed, dense within a playlist
+    public var tuneId: Int64
+
+    public static let databaseTableName = "playlist_tracks"
+
+    public init(playlistId: Int64, position: Int, tuneId: Int64) {
+        self.playlistId = playlistId
+        self.position = position
+        self.tuneId = tuneId
+    }
+}
+
 // MARK: - DB
 
 public final class CatalogDB {
@@ -131,6 +163,22 @@ public final class CatalogDB {
                 t.column("author")
                 t.column("path")
                 t.tokenizer = .unicode61()
+            }
+        }
+
+        m.registerMigration("v2_playlists") { db in
+            try db.create(table: "playlists") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("name",      .text).notNull()
+                t.column("createdAt", .datetime).notNull()
+            }
+            try db.create(table: "playlist_tracks") { t in
+                t.column("playlistId", .integer).notNull()
+                    .references("playlists", onDelete: .cascade)
+                t.column("position",   .integer).notNull()
+                t.column("tuneId",     .integer).notNull()
+                    .references("tunes", onDelete: .cascade)
+                t.primaryKey(["playlistId", "position"])
             }
         }
         return m
@@ -228,6 +276,110 @@ public final class CatalogDB {
             for r in rows { if let id = r.id { byID[id] = r } }
             return ids.compactMap { byID[$0] }
         }
+    }
+
+    // MARK: Playlists
+
+    public func playlists() throws -> [Playlist] {
+        try dbWriter.read { db in
+            try Playlist.order(Column("createdAt")).fetchAll(db)
+        }
+    }
+
+    public func createPlaylist(name: String) throws -> Playlist {
+        try dbWriter.write { db in
+            var p = Playlist(name: name, createdAt: Date())
+            try p.insert(db)
+            return p
+        }
+    }
+
+    public func renamePlaylist(id: Int64, name: String) throws {
+        _ = try dbWriter.write { db in
+            try Playlist
+                .filter(key: id)
+                .updateAll(db, [Column("name").set(to: name)])
+        }
+    }
+
+    public func deletePlaylist(id: Int64) throws {
+        _ = try dbWriter.write { db in
+            try Playlist.filter(key: id).deleteAll(db)
+        }
+    }
+
+    public func playlistTrackCount(id: Int64) throws -> Int {
+        try dbWriter.read { db in
+            try Int.fetchOne(
+                db,
+                sql: "SELECT COUNT(*) FROM playlist_tracks WHERE playlistId = ?",
+                arguments: [id]
+            ) ?? 0
+        }
+    }
+
+    /// Tunes in playlist order. Joins tunes ⨝ playlist_tracks ordered by position.
+    public func playlistTracks(id: Int64) throws -> [TuneRow] {
+        try dbWriter.read { db in
+            try TuneRow.fetchAll(db, sql: """
+                SELECT tunes.* FROM tunes
+                JOIN playlist_tracks ON playlist_tracks.tuneId = tunes.id
+                WHERE playlist_tracks.playlistId = ?
+                ORDER BY playlist_tracks.position
+            """, arguments: [id])
+        }
+    }
+
+    public func addToPlaylist(playlistId: Int64, tuneId: Int64) throws {
+        try dbWriter.write { db in
+            let nextPos = try Int.fetchOne(
+                db,
+                sql: "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_tracks WHERE playlistId = ?",
+                arguments: [playlistId]
+            ) ?? 0
+            try PlaylistTrack(
+                playlistId: playlistId,
+                position: nextPos,
+                tuneId: tuneId
+            ).insert(db)
+        }
+    }
+
+    /// Removes the row at `position` and re-packs remaining positions so they
+    /// stay dense (0..n-1). Composite PK (playlistId, position) means we
+    /// can't just shift via UPDATE without temporary collisions, so the
+    /// implementation rewrites the playlist's rows.
+    public func removeFromPlaylist(playlistId: Int64, position: Int) throws {
+        try dbWriter.write { db in
+            let remaining = try PlaylistTrack
+                .filter(Column("playlistId") == playlistId
+                        && Column("position") != position)
+                .order(Column("position"))
+                .fetchAll(db)
+            try PlaylistTrack
+                .filter(Column("playlistId") == playlistId)
+                .deleteAll(db)
+            for (i, t) in remaining.enumerated() {
+                try PlaylistTrack(playlistId: playlistId, position: i, tuneId: t.tuneId)
+                    .insert(db)
+            }
+        }
+    }
+
+    /// Renders the playlist as an extended M3U8 referencing absolute paths
+    /// under `hvscRoot`. Suitable for opening in VLC or another SID-aware
+    /// player; SID Player itself doesn't read M3U.
+    public func exportM3U(playlistId: Int64, hvscRoot: URL) throws -> String {
+        let rows = try playlistTracks(id: playlistId)
+        var out = "#EXTM3U\n"
+        for r in rows {
+            let title  = r.title  ?? "?"
+            let author = r.author ?? "?"
+            let lenSec = (r.defaultLengthMs ?? 0) / 1000
+            out += "#EXTINF:\(lenSec),\(author) - \(title)\n"
+            out += hvscRoot.appendingPathComponent(r.path).path + "\n"
+        }
+        return out
     }
 
     /// Full-text search across title/author/path.

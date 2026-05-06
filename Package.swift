@@ -1,9 +1,10 @@
 // swift-tools-version:5.9
 import PackageDescription
 
-// Homebrew Apple Silicon prefix. Phase 1 only — Phase 6 will vendor
-// libsidplayfp so we don't depend on Homebrew at runtime.
-let homebrewPrefix = "/opt/homebrew"
+// libsidplayfp is vendored as a static archive under
+// Sources/CSIDEngine/Vendor/. The archive is self-contained (only depends
+// on libc++ / libSystem) so the resulting .app has no Homebrew runtime
+// dependency. arm64 only at the moment.
 
 let package = Package(
     name: "sidplayer",
@@ -21,13 +22,19 @@ let package = Package(
         .target(
             name: "CSIDEngine",
             path: "Sources/CSIDEngine",
+            // Don't try to compile the vendored archive as a source file.
+            exclude: ["Vendor/lib"],
             publicHeadersPath: "include",
             cxxSettings: [
-                .unsafeFlags(["-I\(homebrewPrefix)/include"]),
+                // libsidplayfp's own headers (vendored). Path is relative
+                // to the target source directory.
+                .headerSearchPath("Vendor/include"),
             ],
             linkerSettings: [
-                .linkedLibrary("sidplayfp"),
-                .unsafeFlags(["-L\(homebrewPrefix)/lib"]),
+                // Pass the static archive directly to the linker. Path is
+                // relative to the package root. Force-load isn't required —
+                // libsidplayfp symbols are referenced from CSIDEngine.mm.
+                .unsafeFlags(["Sources/CSIDEngine/Vendor/lib/libsidplayfp.a"]),
             ]
         ),
         .target(

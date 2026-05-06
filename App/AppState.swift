@@ -26,11 +26,27 @@ public final class AppState {
         case all
         case favorites
         case browse
+        case playlists                  // root: list of user playlists
+        case playlist(Int64)            // viewing a single playlist by id
+
+        /// Tab-bar grouping. `.playlists` and `.playlist(_)` share a tab.
+        public var category: String {
+            switch self {
+            case .all:       return "all"
+            case .favorites: return "favorites"
+            case .browse:    return "browse"
+            case .playlists, .playlist: return "playlists"
+            }
+        }
     }
     public var browseMode: BrowseMode = .all
     public var browsePath: String = ""           // relative to HVSC root
     public var browseDirs: [String] = []         // child dirs at browsePath
     public var favoriteIDs: Set<Int64> = []
+
+    // MARK: Playlists
+    public var playlists: [Playlist] = []
+    public var playlistCounts: [Int64: Int] = [:]
 
     // MARK: Theme
     public var theme: AppTheme = .systemDefault
@@ -174,6 +190,70 @@ public final class AppState {
         Task { try? await refreshSearch() }
     }
 
+    // MARK: Playlists
+
+    public func loadPlaylists() {
+        guard let db = catalog else { return }
+        playlists = (try? db.playlists()) ?? []
+        var counts: [Int64: Int] = [:]
+        for p in playlists {
+            if let id = p.id {
+                counts[id] = (try? db.playlistTrackCount(id: id)) ?? 0
+            }
+        }
+        playlistCounts = counts
+    }
+
+    @discardableResult
+    public func createPlaylist(name: String) -> Int64? {
+        guard let db = catalog else { return nil }
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return nil }
+        do {
+            let p = try db.createPlaylist(name: trimmed)
+            loadPlaylists()
+            return p.id
+        } catch {
+            lastError = error.localizedDescription
+            return nil
+        }
+    }
+
+    public func deletePlaylist(_ id: Int64) {
+        try? catalog?.deletePlaylist(id: id)
+        if case .playlist(let cur) = browseMode, cur == id {
+            setBrowseMode(.playlists)
+        }
+        loadPlaylists()
+    }
+
+    public func renamePlaylist(_ id: Int64, to name: String) {
+        let trimmed = name.trimmingCharacters(in: .whitespaces)
+        guard !trimmed.isEmpty else { return }
+        try? catalog?.renamePlaylist(id: id, name: trimmed)
+        loadPlaylists()
+    }
+
+    public func addToPlaylist(playlistID: Int64, tuneID: Int64) {
+        try? catalog?.addToPlaylist(playlistId: playlistID, tuneId: tuneID)
+        loadPlaylists()
+        if case .playlist(let cur) = browseMode, cur == playlistID {
+            Task { try? await refreshSearch() }
+        }
+    }
+
+    /// Remove a tune from the currently-viewed playlist by its row index.
+    public func removeFromCurrentPlaylist(at index: Int) {
+        guard case .playlist(let pid) = browseMode else { return }
+        try? catalog?.removeFromPlaylist(playlistId: pid, position: index)
+        loadPlaylists()
+        Task { try? await refreshSearch() }
+    }
+
+    public func enterPlaylist(_ id: Int64) {
+        setBrowseMode(.playlist(id))
+    }
+
     public func enterBrowseDir(_ name: String) {
         browsePath = browsePath.isEmpty ? name : "\(browsePath)/\(name)"
         Task { try? await refreshSearch() }
@@ -211,6 +291,7 @@ public final class AppState {
                 self.hvscSource = HVSCSource(root: nested)
             }
 
+            loadPlaylists()
             try await refreshSearch()
             self.bootstrap = ((try? db.count()) ?? 0) > 0 ? .ready : .notReady
         } catch {
@@ -326,6 +407,20 @@ public final class AppState {
             self.browseDirs = dirs
             self.rows = tunes.compactMap(TuneItem.init(row:))
             applySort()
+
+        case .playlists:
+            self.rows = []
+            self.sortedRows = []
+            self.browseDirs = []
+            loadPlaylists()
+
+        case .playlist(let id):
+            let tunes = (try? db.playlistTracks(id: id)) ?? []
+            self.rows = tunes.compactMap(TuneItem.init(row:))
+            // Preserve playlist order; user-clicked column header sorts apply
+            // afterwards via the Table's sortBinding.
+            self.sortedRows = self.rows
+            self.browseDirs = []
         }
     }
 

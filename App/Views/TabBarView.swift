@@ -9,6 +9,8 @@ struct TabBarView: View {
             tab(.favorites,  title: "Favorites", icon: "star.fill",
                 badge: state.favoriteIDs.isEmpty ? nil : "\(state.favoriteIDs.count)")
             tab(.browse,     title: "Browse",    icon: "folder.fill")
+            tab(.playlists,  title: "Playlists", icon: "music.note.list",
+                badge: state.playlists.isEmpty ? nil : "\(state.playlists.count)")
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 8)
@@ -20,7 +22,8 @@ struct TabBarView: View {
                      title: String,
                      icon: String,
                      badge: String? = nil) -> some View {
-        let selected = state.browseMode == mode
+        // Match by category so .playlist(id) still highlights the Playlists tab.
+        let selected = state.browseMode.category == mode.category
         let theme = state.theme
         return Button {
             state.setBrowseMode(mode)

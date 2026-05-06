@@ -25,16 +25,18 @@ Built on [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) for cycle-
 ## Requirements
 
 - **macOS 14 (Sonoma)** or later
-- **Xcode 15+** and Apple Silicon or Intel Mac
-- **Homebrew** for the libsidplayfp dependency (development only)
+- **Xcode 15+** on Apple Silicon (arm64). x86_64 is supported by the codebase but the vendored libsidplayfp archive is arm64-only — see "Universal binary" below to add x86_64.
+- **xcodegen** to regenerate the Xcode project from `project.yml`
 - ~1 GB disk space for HVSC
+
+`libsidplayfp` is bundled as a static archive under `Sources/CSIDEngine/Vendor/`; you do **not** need `brew install libsidplayfp`.
 
 ---
 
 ## Building from source
 
 ```bash
-brew install libsidplayfp pkg-config xcodegen
+brew install xcodegen
 git clone https://github.com/xrayzsoftware/sidplayer.git
 cd sidplayer
 xcodegen generate
@@ -43,6 +45,24 @@ open ~/Library/Developer/Xcode/DerivedData/SIDPlayer-*/Build/Products/Debug/SID\
 ```
 
 Or open `SIDPlayer.xcodeproj` in Xcode after running `xcodegen generate`, hit ⌘R.
+
+For a clean Release install to `/Applications`:
+
+```bash
+./scripts/install.sh
+```
+
+### Universal binary
+
+The vendored `libsidplayfp.a` is arm64 only. To produce a universal build, build libsidplayfp for x86_64 separately and `lipo` the archives together:
+
+```bash
+arch -x86_64 /usr/local/bin/brew install libsidplayfp
+lipo -create \
+    Sources/CSIDEngine/Vendor/lib/libsidplayfp.a \
+    /usr/local/opt/libsidplayfp/lib/libsidplayfp.a \
+    -output Sources/CSIDEngine/Vendor/lib/libsidplayfp.a
+```
 
 ### CLI tools
 
@@ -87,7 +107,11 @@ sidplayer/
 ├── Sources/
 │   ├── CSIDEngine/                   Obj-C++ bridge over libsidplayfp
 │   │   ├── include/CSIDEngine.h      pure Obj-C public API for Swift
-│   │   └── CSIDEngine.mm             Obj-C++ wrapping sidplayfp + SidTune
+│   │   ├── CSIDEngine.mm             Obj-C++ wrapping sidplayfp + SidTune
+│   │   └── Vendor/                   bundled libsidplayfp static archive
+│   │       ├── lib/libsidplayfp.a    arm64 static lib (~470 KB)
+│   │       ├── include/sidplayfp/    libsidplayfp's public headers
+│   │       └── LICENSE.libsidplayfp  GPL-2.0 license text
 │   │
 │   ├── SIDEngine/                    Pure-Swift player core
 │   │   ├── SIDEngine.swift           Swift wrapper over the bridge
@@ -154,7 +178,8 @@ libsidplayfp is C++. Swift can't import C++ directly with full fidelity (no clas
 
 - **All-tab is capped at 1000 rows.** SwiftUI `Table` Debug-build sort on 60k items takes seconds. A Release build is ~5–10× faster, and a future LazyVStack-based custom list would lift the cap entirely.
 - **No app sandboxing.** Disabled during development so HVSC files can live anywhere. App Sandbox + entitlements are a TODO before any kind of distribution.
-- **Distribution license:** libsidplayfp is GPLv2. Linking it makes any distributed binary GPL. Fine for a personal build; matters if you ever want to ship commercially.
+- **Distribution license:** libsidplayfp is GPLv2 and is statically linked into the app. Any distributed binary is therefore GPL. Fine for a personal build; matters if you ever want to ship commercially. The bundled license sits at `Sources/CSIDEngine/Vendor/LICENSE.libsidplayfp`.
+- **arm64 only by default.** The vendored libsidplayfp archive is arm64; producing a universal app requires lipo'ing in an x86_64 build (see Universal binary section above).
 - **C64 ROM images** (KERNAL/BASIC/CHARGEN) are not bundled. Most PSID tunes don't need them; some RSID tunes will fail to play. Bundling open-source replacements (from VICE) is on the roadmap.
 - **Title-bar text contrast** on lighter themes (Solarized Light, etc.) can be off — macOS computes the title color from the window appearance rather than your theme palette.
 
@@ -172,4 +197,5 @@ libsidplayfp is C++. Swift can't import C++ directly with full fidelity (no clas
 ## License
 
 Source code in this repository: MIT.
-Linked at runtime: libsidplayfp (GPLv2). Distributing built binaries therefore requires GPL compliance.
+
+`libsidplayfp` (statically linked in) is GPLv2-or-later — see `Sources/CSIDEngine/Vendor/LICENSE.libsidplayfp`. Distributing the built `.app` therefore requires GPL compliance: the binary as a whole becomes GPL, and you must offer the corresponding source (libsidplayfp's source, plus this repo).

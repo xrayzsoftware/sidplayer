@@ -110,7 +110,14 @@ public final class SIDPlayer: @unchecked Sendable {
         paused = true
         try? stopProducer()
         if av.isRunning { av.stop() }
-        engine.stop()
+        // Rewind to the start of the current song without unloading the tune,
+        // so the next play() resumes from zero. Calling engine.stop() here
+        // would unload the tune entirely and the next play() would be silent.
+        let song = engine.currentSong
+        if song > 0 {
+            try? engine.select(song: song)
+            syncVoiceEngines(toSong: song)
+        }
         ring.clear()
     }
 

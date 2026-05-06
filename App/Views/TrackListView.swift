@@ -64,9 +64,57 @@ struct TrackListView: View {
         .foregroundStyle(theme.textPrimary)
         .font(.system(size: 12))
         .tint(theme.textAccent)
+        .contextMenu(forSelectionType: TuneItem.ID.self) { ids in
+            if let id = ids.first {
+                rowContextMenu(for: id)
+            }
+        }
         .onChange(of: state.selectedID) { _, newID in
             guard let id = newID else { return }
             Task { await state.play(tuneID: id) }
+        }
+    }
+
+    @ViewBuilder
+    private func rowContextMenu(for tuneID: Int64) -> some View {
+        Button {
+            state.toggleFavorite(tuneID)
+        } label: {
+            Label(
+                state.favoriteIDs.contains(tuneID) ? "Remove from Favorites" : "Add to Favorites",
+                systemImage: "star"
+            )
+        }
+
+        Menu("Add to Playlist") {
+            if state.playlists.isEmpty {
+                Text("No playlists yet")
+            } else {
+                ForEach(state.playlists) { p in
+                    if let pid = p.id {
+                        Button(p.name) {
+                            state.addToPlaylist(playlistID: pid, tuneID: tuneID)
+                        }
+                    }
+                }
+            }
+            Divider()
+            Button("New Playlist…") {
+                if let pid = state.createPlaylist(name: "New Playlist") {
+                    state.addToPlaylist(playlistID: pid, tuneID: tuneID)
+                }
+            }
+        }
+
+        if case .playlist = state.browseMode {
+            Divider()
+            Button("Remove from Playlist", role: .destructive) {
+                // Position in storage order (state.rows), not the possibly-
+                // resorted sortedRows view.
+                if let idx = state.rows.firstIndex(where: { $0.id == tuneID }) {
+                    state.removeFromCurrentPlaylist(at: idx)
+                }
+            }
         }
     }
 

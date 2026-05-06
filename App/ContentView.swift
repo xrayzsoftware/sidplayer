@@ -57,10 +57,11 @@ struct ContentView: View {
                 FilterBar(text: $state.searchQuery)
                 Divider()
 
-                if state.browseMode == .browse {
-                    BrowseView()
-                } else {
-                    TrackListView()
+                switch state.browseMode {
+                case .browse:    BrowseView()
+                case .playlists: PlaylistsRootView()
+                case .playlist:  PlaylistDetailView()
+                default:         TrackListView()
                 }
 
                 Divider()
