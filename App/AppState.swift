@@ -54,6 +54,20 @@ public final class AppState {
     public var showVisualizers: Bool = true
     public var allTabLimit: Int = 10_000
 
+    // MARK: Visualizer mode
+    public enum SecondaryVizMode: String, CaseIterable, Sendable {
+        case peakMeter, spectrogram, vectorscope
+
+        public var label: String {
+            switch self {
+            case .peakMeter:   return "PEAKS"
+            case .spectrogram: return "WATERFALL"
+            case .vectorscope: return "PHOSPHOR"
+            }
+        }
+    }
+    public var secondaryViz: SecondaryVizMode = .peakMeter
+
     // MARK: Catalog
     public var catalog: CatalogDB?
     public var hvscSource: HVSCSource?
@@ -113,6 +127,7 @@ public final class AppState {
     private static let scrollerKey  = "showScroller.v1"
     private static let vizKey       = "showVisualizers.v1"
     private static let allLimitKey  = "allTabLimit.v1"
+    private static let secondaryVizKey = "secondaryViz.v1"
 
     public init() {
         player.setVolume(Float(volume))
@@ -127,6 +142,17 @@ public final class AppState {
         player.vizEnabled = showVisualizers
         let savedLimit = UserDefaults.standard.integer(forKey: Self.allLimitKey)
         if savedLimit > 0 { allTabLimit = savedLimit }
+        if let raw = UserDefaults.standard.string(forKey: Self.secondaryVizKey),
+           let mode = SecondaryVizMode(rawValue: raw) {
+            secondaryViz = mode
+        }
+    }
+
+    public func cycleSecondaryViz() {
+        let all = SecondaryVizMode.allCases
+        let i = all.firstIndex(of: secondaryViz) ?? 0
+        secondaryViz = all[(i + 1) % all.count]
+        UserDefaults.standard.set(secondaryViz.rawValue, forKey: Self.secondaryVizKey)
     }
 
     public func setAllTabLimit(_ limit: Int) {

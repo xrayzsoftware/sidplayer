@@ -14,7 +14,7 @@ struct ContentView: View {
                 if state.showVisualizers {
                     HStack(spacing: 8) {
                         WaveformView(taps: state.player.voiceTaps)
-                        PeakMeterView(tap: state.player.vizTap)
+                        SecondaryVisualizer()
                     }
                     .frame(height: 96)
                     .padding(.horizontal, 12)
@@ -78,6 +78,38 @@ struct ContentView: View {
         .task(id: state.searchQuery) {
             try? await Task.sleep(nanoseconds: 150_000_000)
             try? await state.refreshSearch()
+        }
+    }
+}
+
+/// Right-hand visualizer slot. Cycles through peak meter / spectrogram /
+/// vectorscope via a small button overlaid in the top-right corner. The
+/// per-voice waveform on the left is always shown.
+private struct SecondaryVisualizer: View {
+    @Environment(AppState.self) private var state
+
+    var body: some View {
+        ZStack(alignment: .topTrailing) {
+            switch state.secondaryViz {
+            case .peakMeter:
+                PeakMeterView(tap: state.player.vizTap)
+            case .spectrogram:
+                SpectrogramView(tap: state.player.vizTap)
+            case .vectorscope:
+                VectorscopeView(tap: state.player.vizTap)
+            }
+
+            Button {
+                state.cycleSecondaryViz()
+            } label: {
+                Image(systemName: "arrow.triangle.2.circlepath")
+                    .font(.system(size: 10, weight: .semibold))
+                    .padding(5)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(state.theme.textSecondary.opacity(0.85))
+            .help("Cycle visualizer (peak / waterfall / phosphor)")
+            .padding(4)
         }
     }
 }

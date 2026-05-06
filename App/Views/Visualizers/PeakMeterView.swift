@@ -1,5 +1,4 @@
 import SwiftUI
-import Accelerate
 import SIDEngine
 
 private let kFFTSize = 1024
@@ -14,44 +13,24 @@ private final class PeakMeterState {
     /// Decaying peak hold per band, 0...1.
     var peakLevels = [Float](repeating: 0, count: kBands)
 
-    private let setup: FFTSetup
-    private var realIn = [Float](repeating: 0, count: kFFTSize)
-    private var imagIn = [Float](repeating: 0, count: kFFTSize)
-    private var window = [Float](repeating: 0, count: kFFTSize)
-    private var binIdx: [Int] = []
+    let fft: FFTAnalyzer?
+    private let binIdx: [Int]
 
     init() {
-        setup = vDSP_create_fftsetup(vDSP_Length(log2(Float(kFFTSize))), FFTRadix(kFFTRadix2))!
-        vDSP_hann_window(&window, vDSP_Length(kFFTSize), Int32(vDSP_HANN_NORM))
-
-        let minHz: Float = 50
-        let maxHz: Float = 12_000
-        let sampleRate: Float = 44_100
-        binIdx = (0..<kBands).map { i in
-            let t = Float(i) / Float(kBands - 1)
-            let hz = minHz * powf(maxHz / minHz, t)
-            let b = Int((hz * Float(kFFTSize) / sampleRate).rounded())
-            return min(max(b, 1), kFFTBins - 1)
-        }
+        fft = FFTAnalyzer(size: kFFTSize)
+        binIdx = FFTAnalyzer.logBins(
+            bands: kBands, minHz: 50, maxHz: 12_000,
+            sampleRate: 44_100, fftSize: kFFTSize
+        )
     }
-
-    deinit { vDSP_destroy_fftsetup(setup) }
 
     /// Updates `bandLevels` (smoothed) and `peakLevels` (decaying caps).
     func tick(tap: VizTap) {
+        guard let fft else { return }
         let snap = tap.snapshotFloats(count: kFFTSize)
         guard snap.count == kFFTSize else { return }
 
-        vDSP_vmul(snap, 1, window, 1, &realIn, 1, vDSP_Length(kFFTSize))
-        for i in 0..<kFFTSize { imagIn[i] = 0 }
-
-        let log2n = vDSP_Length(log2(Float(kFFTSize)))
-        realIn.withUnsafeMutableBufferPointer { rb in
-            imagIn.withUnsafeMutableBufferPointer { ib in
-                var sc = DSPSplitComplex(realp: rb.baseAddress!, imagp: ib.baseAddress!)
-                vDSP_fft_zrip(setup, &sc, 1, log2n, FFTDirection(FFT_FORWARD))
-            }
-        }
+        fft.transform(snap)
 
         for c in 0..<kBands {
             let bin = binIdx[c]
@@ -59,8 +38,7 @@ private final class PeakMeterState {
             var sum: Float = 0
             var n: Int = 0
             for k in max(1, bin - 1)...min(kFFTBins - 1, bin + 1) {
-                let re = realIn[k]; let im = imagIn[k]
-                sum += sqrtf(re*re + im*im)
+                sum += fft.magnitude(bin: k)
                 n += 1
             }
             let mag = sum / Float(max(n, 1))
