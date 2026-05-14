@@ -94,10 +94,10 @@ public final class AppState {
         let myGen = sortGen
         let snapshot = rows
         let order = sortOrder
-        Task.detached(priority: .userInitiated) {
+        Task.detached(priority: .userInitiated) { [weak self] in
             let sorted = snapshot.sorted(using: order)
             await MainActor.run {
-                guard self.sortGen == myGen else { return }
+                guard let self, self.sortGen == myGen else { return }
                 self.sortedRows = sorted
             }
         }
@@ -523,10 +523,13 @@ public final class AppState {
     }
 
     private func jumpToAdjacentTrack(offset: Int) {
+        // Follow the visible sorted order, not storage order.
+        let list = sortedRows
         guard let id = currentTuneID,
-              let idx = rows.firstIndex(where: { $0.id == id }) else { return }
-        let next = (idx + offset + rows.count) % rows.count
-        let target = rows[next].id
+              let idx = list.firstIndex(where: { $0.id == id }),
+              !list.isEmpty else { return }
+        let next = (idx + offset + list.count) % list.count
+        let target = list[next].id
         selectedID = target
         Task { await play(tuneID: target) }
     }

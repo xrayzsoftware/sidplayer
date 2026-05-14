@@ -55,7 +55,7 @@ struct TrackListView: View {
             }.width(min: 36, ideal: 40, max: 50)
 
             TableColumn("Time", value: \.row.defaultLengthMs, comparator: OptionalIntComparator()) { (item: TuneItem) in
-                Text(Self.formatMs(item.row.defaultLengthMs ?? 0))
+                Text(Self.formatMs(lengthMs(for: item)))
             }.width(min: 56, ideal: 60, max: 80)
         }
         .tableStyle(.inset(alternatesRowBackgrounds: false))
@@ -116,6 +116,16 @@ struct TrackListView: View {
                 }
             }
         }
+    }
+
+    private func lengthMs(for item: TuneItem) -> Int {
+        if item.id == state.currentTuneID {
+            let idx = state.currentSubtune - 1
+            if idx >= 0 && idx < state.subtuneLengthsMs.count {
+                return state.subtuneLengthsMs[idx]
+            }
+        }
+        return item.row.defaultLengthMs ?? 0
     }
 
     static func formatMs(_ ms: Int) -> String {

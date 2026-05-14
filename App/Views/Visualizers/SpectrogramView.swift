@@ -93,13 +93,12 @@ struct SpectrogramView: View {
 
     @State private var spec = SpectrogramState()
     @State private var lut  = GradientLUT()
-    @State private var tick: UInt64 = 0
-    private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
         let theme = state.theme
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
         Canvas { ctx, size in
-            _ = tick
+            _ = timeline.date
             spec.tick(tap: tap)
             lut.ensure(theme: theme)
 
@@ -150,6 +149,6 @@ struct SpectrogramView: View {
         }
         .background(theme.visualizerBackground)
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .onReceive(timer) { _ in tick &+= 1 }
+        }
     }
 }

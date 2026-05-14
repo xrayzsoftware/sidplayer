@@ -238,30 +238,27 @@ public final class CatalogDB {
     /// or end with no trailing slash (e.g. `"MUSICIANS/H/Hubbard_Rob"`).
     public func browse(prefix: String) throws -> (dirs: [String], tunes: [TuneRow]) {
         let p = prefix.isEmpty ? "" : prefix + "/"
+        let likePattern = p + "%"
+        let restStart = p.count + 1   // 1-indexed for SQLite substr()
         return try dbWriter.read { db in
-            let rows = try TuneRow
-                .filter(p.isEmpty ? Column("path").like("%") : Column("path").like("\(p)%"))
-                .order(Column("path"))
-                .fetchAll(db)
+            // Direct file rows: path under prefix with no further '/'.
+            let tunes = try TuneRow.fetchAll(db, sql: """
+                SELECT * FROM tunes
+                WHERE path LIKE ?
+                  AND instr(substr(path, ?), '/') = 0
+                ORDER BY path
+            """, arguments: [likePattern, restStart])
 
-            var dirSet: [String: Bool] = [:]   // ordered insertion via String dict
-            var dirsList: [String] = []
-            var tunes: [TuneRow] = []
-            tunes.reserveCapacity(rows.count)
+            // Immediate subdirectory names: first segment of the remainder
+            // after prefix, for rows that have a further '/'.
+            let dirs = try String.fetchAll(db, sql: """
+                SELECT DISTINCT substr(path, ?, instr(substr(path, ?), '/') - 1)
+                FROM tunes
+                WHERE path LIKE ?
+                  AND instr(substr(path, ?), '/') > 0
+            """, arguments: [restStart, restStart, likePattern, restStart])
 
-            for r in rows {
-                let rest = String(r.path.dropFirst(p.count))
-                if let slash = rest.firstIndex(of: "/") {
-                    let dir = String(rest[..<slash])
-                    if dirSet[dir] == nil {
-                        dirSet[dir] = true
-                        dirsList.append(dir)
-                    }
-                } else {
-                    tunes.append(r)
-                }
-            }
-            return (dirsList.sorted(by: { $0.localizedStandardCompare($1) == .orderedAscending }),
+            return (dirs.sorted(by: { $0.localizedStandardCompare($1) == .orderedAscending }),
                     tunes)
         }
     }

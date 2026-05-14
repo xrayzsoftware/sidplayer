@@ -1,5 +1,23 @@
 import Foundation
 import AVFoundation
+import os
+
+/// Tiny lock-wrapped Bool. Matches `RingBuffer`'s `OSAllocatedUnfairLock` style
+/// so the producer hot path stays branch-light (one unfair-lock acquire per
+/// chunk, microseconds).
+private final class AtomicBool: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock()
+    private var value: Bool
+    init(_ initial: Bool) { self.value = initial }
+    var get: Bool {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+    func set(_ newValue: Bool) {
+        lock.lock(); defer { lock.unlock() }
+        value = newValue
+    }
+}
 
 /// High-level playback controller. Wraps `SIDPlayerEngine` with:
 ///  - a producer thread that calls the SID emulator off the audio render thread
@@ -22,19 +40,30 @@ public final class SIDPlayer: @unchecked Sendable {
     private let voiceEngines: [SIDPlayerEngine]
     /// When false, the producer thread skips rendering the voice engines —
     /// saves ~3% CPU when the per-voice waveform is hidden.
-    public var vizEnabled: Bool = true
+    public var vizEnabled: Bool {
+        get { _vizEnabled.get }
+        set { _vizEnabled.set(newValue) }
+    }
+    private let _vizEnabled = AtomicBool(true)
 
     private let av = AVAudioEngine()
     private var sourceNode: AVAudioSourceNode?
+    /// Pre-allocated scratch buffer for the audio render callback. Sized to
+    /// `ringCapacity` so any plausible `frameCount` fits without realloc on
+    /// the real-time thread.
+    private var renderScratch: UnsafeMutablePointer<Int16>?
+    private var renderScratchCapacity: Int = 0
     private let ring: RingBuffer
+    private let ringCapacity: Int
     private var producer: Thread?
-    private var producerStop = false
-    private var paused = true
+    private let producerStop = AtomicBool(false)
+    private let paused = AtomicBool(true)
 
     public init(sampleRate: Double = 44_100, ringCapacity: Int = 4096) {
         self.engine        = SIDPlayerEngine()
         self.sampleRate    = sampleRate
         self.ring          = RingBuffer(capacity: ringCapacity)
+        self.ringCapacity  = ringCapacity
         self.vizTap        = VizTap(capacity: 8192)
         self.voiceEngines  = (0..<3).map { _ in SIDPlayerEngine() }
         self.voiceTaps     = (0..<3).map { _ in VizTap(capacity: 8192) }
@@ -65,15 +94,21 @@ public final class SIDPlayer: @unchecked Sendable {
         }
     }
 
-    deinit { stop() }
+    deinit {
+        stop()
+        if let s = renderScratch {
+            s.deallocate()
+            renderScratch = nil
+        }
+    }
 
     public var info: TuneInfo? { engine.info }
     public var currentTime: TimeInterval { engine.currentTime }
     public var currentSong: Int { engine.currentSong }
-    public var isPlaying: Bool { !paused }
+    public var isPlaying: Bool { !paused.get }
 
     public func load(path: String) throws {
-        try stopProducer()
+        stopProducer()
         ring.clear()
         try engine.load(path: path)
         let start = engine.info?.startSong ?? 1
@@ -97,18 +132,18 @@ public final class SIDPlayer: @unchecked Sendable {
             try installSourceNodeIfNeeded()
             try av.start()
         }
-        paused = false
+        paused.set(false)
         startProducer()
     }
 
     public func pause() {
-        paused = true
-        try? stopProducer()
+        paused.set(true)
+        stopProducer()
     }
 
     public func stop() {
-        paused = true
-        try? stopProducer()
+        paused.set(true)
+        stopProducer()
         if av.isRunning { av.stop() }
         // Rewind to the start of the current song without unloading the tune,
         // so the next play() resumes from zero. Calling engine.stop() here
@@ -127,27 +162,27 @@ public final class SIDPlayer: @unchecked Sendable {
     public var volume: Float { av.mainMixerNode.outputVolume }
 
     public func nextSong() throws {
-        try stopProducer()
+        stopProducer()
         ring.clear()
         try engine.nextSong()
         syncVoiceEngines(toSong: engine.currentSong)
-        if !paused { startProducer() }
+        if !paused.get { startProducer() }
     }
 
     public func previousSong() throws {
-        try stopProducer()
+        stopProducer()
         ring.clear()
         try engine.previousSong()
         syncVoiceEngines(toSong: engine.currentSong)
-        if !paused { startProducer() }
+        if !paused.get { startProducer() }
     }
 
     public func select(song: Int) throws {
-        try stopProducer()
+        stopProducer()
         ring.clear()
         try engine.select(song: song)
         syncVoiceEngines(toSong: song)
-        if !paused { startProducer() }
+        if !paused.get { startProducer() }
     }
 
     private func syncVoiceEngines(toSong song: Int) {
@@ -171,19 +206,25 @@ public final class SIDPlayer: @unchecked Sendable {
                           userInfo: [NSLocalizedDescriptionKey: "audio format init failed"])
         }
 
+        // Pre-allocate render scratch once. AVAudioEngine calls the source
+        // node from a single real-time thread, so reuse is safe without a
+        // lock; sizing to ringCapacity covers any plausible frameCount.
+        let scratchCap = ringCapacity
+        let scratch = UnsafeMutablePointer<Int16>.allocate(capacity: scratchCap)
+        renderScratch = scratch
+        renderScratchCapacity = scratchCap
+
         let ringRef = ring
         let tapRef  = vizTap
         let node = AVAudioSourceNode(format: format) { _, _, frameCount, abl -> OSStatus in
             let bufList = UnsafeMutableAudioBufferListPointer(abl)
             guard let dest = bufList[0].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
 
-            let n = Int(frameCount)
-            let scratch = UnsafeMutablePointer<Int16>.allocate(capacity: n)
-            defer { scratch.deallocate() }
-
+            let n = min(Int(frameCount), scratchCap)
             let read = ringRef.read(scratch, count: n)
             for i in 0..<read { dest[i] = Float(scratch[i]) / 32768.0 }
-            if read < n { dest.advanced(by: read).update(repeating: 0, count: n - read) }
+            let total = Int(frameCount)
+            if read < total { dest.advanced(by: read).update(repeating: 0, count: total - read) }
             if read > 0 { tapRef.append(scratch, count: read) }
             return noErr
         }
@@ -196,7 +237,7 @@ public final class SIDPlayer: @unchecked Sendable {
 
     private func startProducer() {
         guard producer == nil else { return }
-        producerStop = false
+        producerStop.set(false)
         let t = Thread { [weak self] in
             guard let self else { return }
             self.producerLoop()
@@ -207,13 +248,15 @@ public final class SIDPlayer: @unchecked Sendable {
         t.start()
     }
 
-    private func stopProducer() throws {
-        producerStop = true
+    /// Joins the producer thread unconditionally. The loop polls
+    /// `producerStop` each iteration and exits in well under a frame, so an
+    /// unbounded wait can't actually hang — but it does guarantee we never
+    /// orphan a thread and race a freshly started one on the same engine.
+    private func stopProducer() {
+        producerStop.set(true)
         producer?.cancel()
-        var spins = 0
-        while let t = producer, !t.isFinished, spins < 50 {
+        while let t = producer, !t.isFinished {
             Thread.sleep(forTimeInterval: 0.005)
-            spins += 1
         }
         producer = nil
     }
@@ -227,7 +270,7 @@ public final class SIDPlayer: @unchecked Sendable {
         defer { [scratch, v0, v1, v2].forEach { $0.deallocate() } }
         let voiceScratch = [v0, v1, v2]
 
-        while !producerStop {
+        while !producerStop.get {
             if ring.freeSpace < chunk {
                 Thread.sleep(forTimeInterval: 0.002)
                 continue
@@ -252,7 +295,7 @@ public final class SIDPlayer: @unchecked Sendable {
             // Push main mix to the audio ring. This is the only thing the
             // audio path depends on.
             var written = 0
-            while written < n && !producerStop {
+            while written < n && !producerStop.get {
                 let w = ring.write(scratch.advanced(by: written), count: n - written)
                 written += w
                 if w == 0 { Thread.sleep(forTimeInterval: 0.001) }

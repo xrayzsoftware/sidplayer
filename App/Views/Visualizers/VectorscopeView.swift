@@ -39,13 +39,13 @@ struct VectorscopeView: View {
     @Environment(AppState.self) private var state
 
     @State private var ring = PhosphorHistory()
-    @State private var tick: UInt64 = 0
-    private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
         let theme = state.theme
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
         Canvas { ctx, size in
-            _ = tick
+            _ = timeline.date
+            ring.push(tap.snapshotFloats(count: kVecSampleCount))
 
             ctx.fill(
                 Path(CGRect(origin: .zero, size: size)),
@@ -114,9 +114,6 @@ struct VectorscopeView: View {
         }
         .background(theme.visualizerBackground)
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .onReceive(timer) { _ in
-            tick &+= 1
-            ring.push(tap.snapshotFloats(count: kVecSampleCount))
         }
     }
 }

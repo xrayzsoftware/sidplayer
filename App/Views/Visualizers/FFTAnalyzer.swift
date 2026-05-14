@@ -59,6 +59,13 @@ final class FFTAnalyzer {
         fftSize: Int
     ) -> [Int] {
         let bins = fftSize / 2
+        // Single-band degenerate case: avoid divide-by-zero on `bands - 1`.
+        // Return the bin for `minHz` (the t=0 value the loop would produce).
+        guard bands > 1 else {
+            guard bands == 1 else { return [] }
+            let b = Int((minHz * Float(fftSize) / sampleRate).rounded())
+            return [min(max(b, 1), bins - 1)]
+        }
         return (0..<bands).map { i in
             let t  = Float(i) / Float(bands - 1)
             let hz = minHz * powf(maxHz / minHz, t)

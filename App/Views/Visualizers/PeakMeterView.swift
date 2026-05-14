@@ -69,13 +69,12 @@ struct PeakMeterView: View {
     @Environment(AppState.self) private var state
 
     @State private var meter = PeakMeterState()
-    @State private var tick: UInt64 = 0
-    private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
 
     var body: some View {
         let theme = state.theme
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
         Canvas { ctx, size in
-            _ = tick
+            _ = timeline.date
             meter.tick(tap: tap)
 
             ctx.fill(Path(CGRect(origin: .zero, size: size)),
@@ -140,6 +139,6 @@ struct PeakMeterView: View {
         }
         .background(theme.visualizerBackground)
         .clipShape(RoundedRectangle(cornerRadius: 4))
-        .onReceive(timer) { _ in tick &+= 1 }
+        }
     }
 }

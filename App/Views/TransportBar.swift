@@ -55,7 +55,11 @@ struct TransportBar: View {
 
     private var timeLabel: String {
         let cur = Int(state.currentTime)
-        let total = state.defaultLengthMs / 1000
+        let idx = state.currentSubtune - 1
+        let lenMs = (idx >= 0 && idx < state.subtuneLengthsMs.count)
+            ? state.subtuneLengthsMs[idx]
+            : state.defaultLengthMs
+        let total = lenMs / 1000
         return String(format: "%d:%02d / %d:%02d", cur / 60, cur % 60, total / 60, total % 60)
     }
 }
