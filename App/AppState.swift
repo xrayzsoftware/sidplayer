@@ -311,10 +311,23 @@ public final class AppState {
             let db = try CatalogDB(url: dbURL)
             self.catalog = db
 
-            if FileManager.default.fileExists(atPath: hvsc.appendingPathComponent("DOCUMENTS/Songlengths.md5").path) {
-                self.hvscSource = HVSCSource(root: hvsc)
-            } else if let nested = try? HVSCDownloader.locateHVSCRoot(under: hvsc) {
-                self.hvscSource = HVSCSource(root: nested)
+            // Prefer a previously-bookmarked user-chosen folder; fall back to
+            // the default app-support `hvsc/` location populated by the
+            // built-in downloader.
+            if let bookmarked = HVSCBookmark.resolve() {
+                let candidate = HVSCSource(root: bookmarked)
+                if (try? candidate.validate()) != nil {
+                    self.hvscSource = candidate
+                } else {
+                    HVSCBookmark.release(bookmarked)
+                }
+            }
+            if hvscSource == nil {
+                if FileManager.default.fileExists(atPath: hvsc.appendingPathComponent("DOCUMENTS/Songlengths.md5").path) {
+                    self.hvscSource = HVSCSource(root: hvsc)
+                } else if let nested = try? HVSCDownloader.locateHVSCRoot(under: hvsc) {
+                    self.hvscSource = HVSCSource(root: nested)
+                }
             }
 
             loadPlaylists()
@@ -390,6 +403,7 @@ public final class AppState {
         let candidate = HVSCSource(root: url)
         do {
             try candidate.validate()
+            HVSCBookmark.save(url)
             hvscSource = candidate
             try await reindex()
         } catch {

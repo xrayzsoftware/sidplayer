@@ -58,5 +58,7 @@ targets:
         CODE_SIGN_IDENTITY: "-"
         DEVELOPMENT_TEAM: ""
         ENABLE_HARDENED_RUNTIME: NO
-        # We're not in the App Sandbox during dev so we can poke at HVSC files anywhere.
-        ENABLE_APP_SANDBOX: NO
+        # 7z extraction now uses SWCompression (pure-Swift), so no more
+        # /usr/bin/tar shell-out, so we can run inside the App Sandbox.
+        CODE_SIGN_ENTITLEMENTS: App/SIDPlayer.entitlements
+        ENABLE_APP_SANDBOX: YES

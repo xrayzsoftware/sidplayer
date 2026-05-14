@@ -17,6 +17,9 @@ let package = Package(
     ],
     dependencies: [
         .package(url: "https://github.com/groue/GRDB.swift.git", from: "7.10.0"),
+        // Pure-Swift 7z reader. HVSC ships only 7z and AppSandbox forbids
+        // shelling out to /usr/bin/tar.
+        .package(url: "https://github.com/tsolomko/SWCompression.git", from: "4.8.6"),
     ],
     targets: [
         .target(
@@ -47,6 +50,7 @@ let package = Package(
             dependencies: [
                 "SIDEngine",
                 .product(name: "GRDB", package: "GRDB.swift"),
+                .product(name: "SWCompression", package: "SWCompression"),
             ],
             path: "Sources/SIDCatalog"
         ),

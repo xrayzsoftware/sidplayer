@@ -1,10 +1,9 @@
 import Foundation
+import SWCompression
 
-/// Downloads the latest HVSC archive (7z) and extracts it via `bsdtar`
-/// (which uses libarchive under the hood — built into macOS 12+).
-///
-/// HVSC is published as 7z only. Apple's Compression framework doesn't
-/// understand 7z, so we shell out. `bsdtar -xf` handles 7z transparently.
+/// Downloads the latest HVSC archive (7z) and extracts it via SWCompression's
+/// pure-Swift 7z reader. Apple's `Compression` framework doesn't understand
+/// 7z, and the App Sandbox forbids shelling out to /usr/bin/tar.
 public final class HVSCDownloader: NSObject, @unchecked Sendable {
     public struct Phase: Sendable, Equatable {
         public enum Kind: Sendable, Equatable {
@@ -75,27 +74,26 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
             }
         )
 
-        // 2. Extract via bsdtar (libarchive). bsdtar handles 7z transparently.
+        // 2. Extract via SWCompression's pure-Swift 7z reader. The whole 7z
+        // is loaded into memory (≈250 MB for current HVSC), then each entry's
+        // payload is decompressed lazily inside `SevenZipContainer.open`.
+        // Sandbox-safe — no Process spawn.
         progress?(.init(kind: .extracting))
         if fm.fileExists(atPath: destination.path) {
             try fm.removeItem(at: destination)
         }
         try fm.createDirectory(at: destination, withIntermediateDirectories: true)
 
-        let proc = Process()
-        proc.executableURL = URL(fileURLWithPath: "/usr/bin/tar")
-        proc.arguments = ["-xf", tmp.path, "-C", destination.path]
-        let stderr = Pipe()
-        proc.standardError = stderr
-        proc.standardOutput = Pipe()  // discard
-        try proc.run()
-        proc.waitUntilExit()
-        if proc.terminationStatus != 0 {
-            let errOut = String(
-                data: stderr.fileHandleForReading.availableData,
-                encoding: .utf8
-            ) ?? ""
-            throw HVSCError.extractionFailed("tar exit \(proc.terminationStatus): \(errOut)")
+        do {
+            let archiveData = try Data(contentsOf: tmp, options: [.mappedIfSafe])
+            let entries = try SevenZipContainer.open(container: archiveData)
+            for entry in entries {
+                try Self.extract(entry: entry, into: destination)
+            }
+        } catch let err as HVSCError {
+            throw err
+        } catch {
+            throw HVSCError.extractionFailed("7z: \(error.localizedDescription)")
         }
         try? fm.removeItem(at: tmp)
 
@@ -107,6 +105,33 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
 
         progress?(.init(kind: .done))
         return Result(version: version, source: source)
+    }
+
+    /// Writes a single 7z entry to disk under `destination`. Rejects
+    /// absolute paths and `..` components so a malicious archive can't
+    /// escape the destination tree.
+    private static func extract(entry: SevenZipEntry, into destination: URL) throws {
+        let name = entry.info.name
+        guard !name.isEmpty, !name.hasPrefix("/") else { return }
+        let components = name.split(separator: "/").map(String.init)
+        guard !components.contains("..") else {
+            throw HVSCError.extractionFailed("rejected path with ..: \(name)")
+        }
+        let outURL = components.reduce(destination) { $0.appendingPathComponent($1) }
+        let fm = FileManager.default
+
+        switch entry.info.type {
+        case .directory:
+            try fm.createDirectory(at: outURL, withIntermediateDirectories: true)
+        case .regular:
+            let parent = outURL.deletingLastPathComponent()
+            try fm.createDirectory(at: parent, withIntermediateDirectories: true)
+            let data = entry.data ?? Data()
+            try data.write(to: outURL, options: .atomic)
+        default:
+            // Symlinks, devices, etc. — HVSC archives don't use them.
+            break
+        }
     }
 
     /// Walk the top level of `dir` and find the directory containing
