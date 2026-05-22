@@ -58,6 +58,11 @@ public final class SIDPlayer: @unchecked Sendable {
     private var producer: Thread?
     private let producerStop = AtomicBool(false)
     private let paused = AtomicBool(true)
+    private(set) var loadedPath: String?
+
+    /// Emulation settings. Applied to all engines on the next load() or
+    /// reloadCurrentTune() call — never while the producer thread is running.
+    public var emulationConfig: EmulationConfig = EmulationConfig()
 
     public init(sampleRate: Double = 44_100, ringCapacity: Int = 4096) {
         self.engine        = SIDPlayerEngine()
@@ -110,6 +115,8 @@ public final class SIDPlayer: @unchecked Sendable {
     public func load(path: String) throws {
         stopProducer()
         ring.clear()
+        loadedPath = path
+        applyConfigToAllEngines()
         try engine.load(path: path)
         let start = engine.info?.startSong ?? 1
         try engine.start(song: start, sampleRate: Int(sampleRate))
@@ -183,6 +190,30 @@ public final class SIDPlayer: @unchecked Sendable {
         try engine.select(song: song)
         syncVoiceEngines(toSong: song)
         if !paused.get { startProducer() }
+    }
+
+    /// Reloads the current tune with the active emulation config.
+    /// Preserves subtune selection. Resumes playback if it was active.
+    public func reloadCurrentTune() throws {
+        guard let path = loadedPath else { return }
+        let song = max(engine.currentSong, 1)
+        let wasPlaying = !paused.get
+        stopProducer()
+        ring.clear()
+        applyConfigToAllEngines()
+        try engine.load(path: path)
+        try engine.start(song: song, sampleRate: Int(sampleRate))
+        for (i, ve) in voiceEngines.enumerated() {
+            try? ve.load(path: path)
+            try? ve.start(song: song, sampleRate: Int(sampleRate))
+            for v in 0..<3 { ve.setVoiceMuted(v, muted: v != i) }
+        }
+        if wasPlaying { try play() }
+    }
+
+    private func applyConfigToAllEngines() {
+        engine.applyConfig(emulationConfig)
+        for ve in voiceEngines { ve.applyConfig(emulationConfig) }
     }
 
     private func syncVoiceEngines(toSong song: Int) {

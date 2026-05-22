@@ -16,6 +16,11 @@ typedef NS_ENUM(NSInteger, CSIDModel) {
     CSIDModelAny,
 };
 
+typedef NS_ENUM(NSInteger, CSIDSampling) {
+    CSIDSamplingInterpolate = 0,
+    CSIDSamplingResample,
+};
+
 @interface CSIDTuneInfo : NSObject
 @property (nonatomic, copy, nullable) NSString *title;
 @property (nonatomic, copy, nullable) NSString *author;
@@ -54,6 +59,14 @@ typedef NS_ENUM(NSInteger, CSIDModel) {
 
 /// Currently selected sub-song (1-indexed). 0 if no song has been started.
 @property (nonatomic, readonly) NSInteger currentSong;
+
+/// Emulation configuration. Set before calling startSong:sampleRate:.
+@property (nonatomic, assign) CSIDModel defaultSidModel;
+@property (nonatomic, assign) BOOL forceSidModel;
+@property (nonatomic, assign) CSIDClock defaultC64Model;
+@property (nonatomic, assign) BOOL forceC64Model;
+@property (nonatomic, assign) BOOL digiBoost;
+@property (nonatomic, assign) CSIDSampling samplingMethod;
 
 /// Renders up to `frameCount` mono int16 frames into `buffer`.
 /// Returns frames actually written (0 indicates engine stop / error).

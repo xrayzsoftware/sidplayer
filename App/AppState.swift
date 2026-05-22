@@ -68,6 +68,9 @@ public final class AppState {
     }
     public var secondaryViz: SecondaryVizMode = .peakMeter
 
+    // MARK: Emulation config
+    public var emulationConfig: EmulationConfig = EmulationConfig()
+
     // MARK: Catalog
     public var catalog: CatalogDB?
     public var hvscSource: HVSCSource?
@@ -128,6 +131,10 @@ public final class AppState {
     private static let vizKey       = "showVisualizers.v1"
     private static let allLimitKey  = "allTabLimit.v1"
     private static let secondaryVizKey = "secondaryViz.v1"
+    private static let sidModelKey    = "sidModel.v1"
+    private static let clockKey       = "clock.v1"
+    private static let digiBoostKey   = "digiBoost.v1"
+    private static let samplingKey    = "sampling.v1"
 
     public init() {
         player.setVolume(Float(volume))
@@ -146,6 +153,7 @@ public final class AppState {
            let mode = SecondaryVizMode(rawValue: raw) {
             secondaryViz = mode
         }
+        loadEmulationConfig()
     }
 
     public func cycleSecondaryViz() {
@@ -153,6 +161,41 @@ public final class AppState {
         let i = all.firstIndex(of: secondaryViz) ?? 0
         secondaryViz = all[(i + 1) % all.count]
         UserDefaults.standard.set(secondaryViz.rawValue, forKey: Self.secondaryVizKey)
+    }
+
+    private func loadEmulationConfig() {
+        if let raw = UserDefaults.standard.string(forKey: Self.sidModelKey),
+           let val = EmulationConfig.SIDModelChoice(rawValue: raw) {
+            emulationConfig.sidModel = val
+        }
+        if let raw = UserDefaults.standard.string(forKey: Self.clockKey),
+           let val = EmulationConfig.ClockChoice(rawValue: raw) {
+            emulationConfig.clock = val
+        }
+        if UserDefaults.standard.object(forKey: Self.digiBoostKey) != nil {
+            emulationConfig.digiBoost = UserDefaults.standard.bool(forKey: Self.digiBoostKey)
+        }
+        if let raw = UserDefaults.standard.string(forKey: Self.samplingKey),
+           let val = EmulationConfig.SamplingMethod(rawValue: raw) {
+            emulationConfig.sampling = val
+        }
+        player.emulationConfig = emulationConfig
+    }
+
+    public func updateEmulationConfig(_ config: EmulationConfig) {
+        emulationConfig = config
+        UserDefaults.standard.set(config.sidModel.rawValue, forKey: Self.sidModelKey)
+        UserDefaults.standard.set(config.clock.rawValue, forKey: Self.clockKey)
+        UserDefaults.standard.set(config.digiBoost, forKey: Self.digiBoostKey)
+        UserDefaults.standard.set(config.sampling.rawValue, forKey: Self.samplingKey)
+        player.emulationConfig = config
+        if currentTuneID != nil {
+            do {
+                try player.reloadCurrentTune()
+            } catch {
+                lastError = error.localizedDescription
+            }
+        }
     }
 
     public func setAllTabLimit(_ limit: Int) {

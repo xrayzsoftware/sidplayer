@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import SIDEngine
 
 struct SettingsSheet: View {
     @Environment(AppState.self) private var state
@@ -87,6 +88,10 @@ struct SettingsSheet: View {
 
             Divider().background(theme.separator)
 
+            EmulationSection()
+
+            Divider().background(theme.separator)
+
             BrowsingLimitSection()
 
             Divider().background(theme.separator)
@@ -96,6 +101,100 @@ struct SettingsSheet: View {
         .padding(20)
         .frame(width: 520)
         .background(theme.windowBackground)
+    }
+
+    private struct EmulationSection: View {
+        @Environment(AppState.self) private var state
+
+        var body: some View {
+            let theme = state.theme
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Emulation")
+                    .font(.headline)
+                    .foregroundStyle(theme.textPrimary)
+
+                HStack {
+                    Text("SID Model")
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Picker("", selection: sidModelBinding) {
+                        ForEach(EmulationConfig.SIDModelChoice.allCases, id: \.self) { c in
+                            Text(c.label).tag(c)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 200)
+                }
+
+                HStack {
+                    Text("Clock")
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Picker("", selection: clockBinding) {
+                        ForEach(EmulationConfig.ClockChoice.allCases, id: \.self) { c in
+                            Text(c.label).tag(c)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 200)
+                }
+
+                HStack {
+                    Text("Sampling")
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Picker("", selection: samplingBinding) {
+                        ForEach(EmulationConfig.SamplingMethod.allCases, id: \.self) { c in
+                            Text(c.label).tag(c)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                }
+
+                Toggle(isOn: digiBoostBinding) {
+                    Text("8580 DigiBoost")
+                        .foregroundStyle(theme.textPrimary)
+                }
+                .toggleStyle(.switch)
+                .tint(theme.textAccent)
+
+                Text("Auto respects each tune's declared chip and clock. Changes reload the current tune.")
+                    .font(.caption)
+                    .foregroundStyle(theme.textSecondary)
+            }
+        }
+
+        private var sidModelBinding: Binding<EmulationConfig.SIDModelChoice> {
+            Binding(
+                get: { state.emulationConfig.sidModel },
+                set: { var c = state.emulationConfig; c.sidModel = $0; state.updateEmulationConfig(c) }
+            )
+        }
+
+        private var clockBinding: Binding<EmulationConfig.ClockChoice> {
+            Binding(
+                get: { state.emulationConfig.clock },
+                set: { var c = state.emulationConfig; c.clock = $0; state.updateEmulationConfig(c) }
+            )
+        }
+
+        private var samplingBinding: Binding<EmulationConfig.SamplingMethod> {
+            Binding(
+                get: { state.emulationConfig.sampling },
+                set: { var c = state.emulationConfig; c.sampling = $0; state.updateEmulationConfig(c) }
+            )
+        }
+
+        private var digiBoostBinding: Binding<Bool> {
+            Binding(
+                get: { state.emulationConfig.digiBoost },
+                set: { var c = state.emulationConfig; c.digiBoost = $0; state.updateEmulationConfig(c) }
+            )
+        }
     }
 
     private struct BrowsingLimitSection: View {

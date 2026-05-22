@@ -24,6 +24,12 @@
 }
 
 @synthesize currentSong = _currentSong;
+@synthesize defaultSidModel = _defaultSidModel;
+@synthesize forceSidModel = _forceSidModel;
+@synthesize defaultC64Model = _defaultC64Model;
+@synthesize forceC64Model = _forceC64Model;
+@synthesize digiBoost = _digiBoost;
+@synthesize samplingMethod = _samplingMethod;
 
 + (NSString *)md5ForFileAtPath:(NSString *)path {
     SidTune tune([path UTF8String], nullptr, true);
@@ -47,6 +53,12 @@ static NSError *makeError(NSString *msg) {
         _scratchHead = 0;
         _sampleRate = 0;
         _currentSong = 0;
+        _defaultSidModel = CSIDModelUnknown;
+        _forceSidModel = NO;
+        _defaultC64Model = CSIDClockUnknown;
+        _forceC64Model = NO;
+        _digiBoost = NO;
+        _samplingMethod = CSIDSamplingInterpolate;
     }
     return self;
 }
@@ -59,6 +71,7 @@ static NSError *makeError(NSString *msg) {
 }
 
 - (BOOL)loadTuneAtPath:(NSString *)path error:(NSError **)error {
+    if (_engine) _engine->load(nullptr);   // detach before deleting
     delete _tune;
     _tune = new SidTune([path UTF8String], nullptr, true);
     if (!_tune->getStatus()) {
@@ -119,9 +132,30 @@ static NSError *makeError(NSString *msg) {
     }
 
     SidConfig cfg = _engine->config();
-    cfg.frequency      = (uint_least32_t)sampleRate;
-    cfg.sidEmulation   = _builder;
-    cfg.samplingMethod = SidConfig::INTERPOLATE;
+    cfg.frequency    = (uint_least32_t)sampleRate;
+    cfg.sidEmulation = _builder;
+
+    // SID model
+    if (_forceSidModel) {
+        cfg.forceSidModel = true;
+        cfg.defaultSidModel = (_defaultSidModel == CSIDModel8580)
+            ? SidConfig::MOS8580 : SidConfig::MOS6581;
+    } else {
+        cfg.forceSidModel = false;
+    }
+
+    // C64 model / clock
+    if (_forceC64Model) {
+        cfg.forceC64Model = true;
+        cfg.defaultC64Model = (_defaultC64Model == CSIDClockNTSC)
+            ? SidConfig::NTSC : SidConfig::PAL;
+    } else {
+        cfg.forceC64Model = false;
+    }
+
+    cfg.digiBoost = _digiBoost;
+    cfg.samplingMethod = (_samplingMethod == CSIDSamplingResample)
+        ? SidConfig::RESAMPLE_INTERPOLATE : SidConfig::INTERPOLATE;
 
     if (!_engine->config(cfg)) {
         if (error) *error = makeError(@(_engine->error() ?: "engine config failed"));

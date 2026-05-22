@@ -177,10 +177,9 @@ libsidplayfp is C++. Swift can't import C++ directly with full fidelity (no clas
 ## Known limitations
 
 - **All-tab is capped at 1000 rows.** SwiftUI `Table` Debug-build sort on 60k items takes seconds. A Release build is ~5–10× faster, and a future LazyVStack-based custom list would lift the cap entirely.
-- **No app sandboxing.** Disabled during development so HVSC files can live anywhere. App Sandbox + entitlements are a TODO before any kind of distribution.
+- **Not signed / notarized.** Ad-hoc signed only — anyone but you will trip Gatekeeper. Developer ID signing + notarization + hardened runtime are TODO before public distribution.
 - **Distribution license:** libsidplayfp is GPLv2 and is statically linked into the app. Any distributed binary is therefore GPL. Fine for a personal build; matters if you ever want to ship commercially. The bundled license sits at `Sources/CSIDEngine/Vendor/LICENSE.libsidplayfp`.
 - **arm64 only by default.** The vendored libsidplayfp archive is arm64; producing a universal app requires lipo'ing in an x86_64 build (see Universal binary section above).
-- **C64 ROM images** (KERNAL/BASIC/CHARGEN) are not bundled. Most PSID tunes don't need them; some RSID tunes will fail to play. Bundling open-source replacements (from VICE) is on the roadmap.
 - **Title-bar text contrast** on lighter themes (Solarized Light, etc.) can be off — macOS computes the title color from the window appearance rather than your theme palette.
 
 ---

@@ -41,6 +41,55 @@ public enum SIDModel: Int, Sendable {
     }
 }
 
+public struct EmulationConfig: Sendable, Equatable {
+    public enum SIDModelChoice: String, Sendable, CaseIterable {
+        case auto = "auto"
+        case mos6581 = "6581"
+        case mos8580 = "8580"
+
+        public var label: String {
+            switch self {
+            case .auto:    return "Auto"
+            case .mos6581: return "6581"
+            case .mos8580: return "8580"
+            }
+        }
+    }
+
+    public enum ClockChoice: String, Sendable, CaseIterable {
+        case auto = "auto"
+        case pal = "pal"
+        case ntsc = "ntsc"
+
+        public var label: String {
+            switch self {
+            case .auto: return "Auto"
+            case .pal:  return "PAL"
+            case .ntsc: return "NTSC"
+            }
+        }
+    }
+
+    public enum SamplingMethod: String, Sendable, CaseIterable {
+        case interpolate = "interpolate"
+        case resample = "resample"
+
+        public var label: String {
+            switch self {
+            case .interpolate: return "Fast"
+            case .resample:    return "Quality"
+            }
+        }
+    }
+
+    public var sidModel: SIDModelChoice = .auto
+    public var clock: ClockChoice = .auto
+    public var digiBoost: Bool = false
+    public var sampling: SamplingMethod = .interpolate
+
+    public init() {}
+}
+
 public struct TuneInfo: Sendable {
     public let title: String?
     public let author: String?
@@ -153,5 +202,35 @@ public final class SIDPlayerEngine {
 
     public func stop() {
         bridge.stop()
+    }
+
+    /// Applies emulation settings to the underlying engine. Call before
+    /// start(song:sampleRate:) for the settings to take effect.
+    public func applyConfig(_ config: EmulationConfig) {
+        switch config.sidModel {
+        case .auto:
+            bridge.forceSidModel = false
+        case .mos6581:
+            bridge.defaultSidModel = .model6581
+            bridge.forceSidModel = true
+        case .mos8580:
+            bridge.defaultSidModel = .model8580
+            bridge.forceSidModel = true
+        }
+
+        switch config.clock {
+        case .auto:
+            bridge.forceC64Model = false
+        case .pal:
+            bridge.defaultC64Model = .PAL
+            bridge.forceC64Model = true
+        case .ntsc:
+            bridge.defaultC64Model = .NTSC
+            bridge.forceC64Model = true
+        }
+
+        bridge.digiBoost = config.digiBoost
+        bridge.samplingMethod = (config.sampling == .resample)
+            ? .resample : .interpolate
     }
 }
