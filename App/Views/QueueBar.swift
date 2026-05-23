@@ -29,14 +29,20 @@ struct QueueBar: View {
     }
 
     private var upNextText: String {
+        if state.repeatMode == .one {
+            return "repeating — \(currentTitle)"
+        }
         if state.subtuneCount > 1 && state.currentSubtune < state.subtuneCount {
             return "sub \(state.currentSubtune + 1)/\(state.subtuneCount) — \(currentTitle)"
         }
+        if state.shuffleEnabled {
+            return "shuffle"
+        }
         if let id = state.currentTuneID,
-           let idx = state.rows.firstIndex(where: { $0.id == id }),
-           !state.rows.isEmpty {
-            let next = (idx + 1) % state.rows.count
-            let r = state.rows[next].row
+           let idx = state.sortedRows.firstIndex(where: { $0.id == id }),
+           !state.sortedRows.isEmpty {
+            let next = (idx + 1) % state.sortedRows.count
+            let r = state.sortedRows[next].row
             return "\(r.title ?? "—") — \(r.author ?? "—")"
         }
         return "—"

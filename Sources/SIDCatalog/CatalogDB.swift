@@ -97,6 +97,25 @@ public struct PlaylistTrack: Codable, FetchableRecord, PersistableRecord, Equata
     }
 }
 
+public struct PlayHistoryRow: Codable, FetchableRecord, MutablePersistableRecord, Equatable, Sendable {
+    public var id: Int64?
+    public var tuneId: Int64
+    public var subtune: Int
+    public var playedAt: Date
+
+    public static let databaseTableName = "play_history"
+
+    public init(tuneId: Int64, subtune: Int = 1, playedAt: Date = Date()) {
+        self.tuneId = tuneId
+        self.subtune = subtune
+        self.playedAt = playedAt
+    }
+
+    public mutating func didInsert(_ inserted: InsertionSuccess) {
+        id = inserted.rowID
+    }
+}
+
 // MARK: - DB
 
 public final class CatalogDB {
@@ -181,6 +200,18 @@ public final class CatalogDB {
                 t.primaryKey(["playlistId", "position"])
             }
         }
+        m.registerMigration("v3_play_history") { db in
+            try db.create(table: "play_history") { t in
+                t.autoIncrementedPrimaryKey("id")
+                t.column("tuneId",   .integer).notNull()
+                    .references("tunes", onDelete: .cascade)
+                t.column("subtune",  .integer).notNull().defaults(to: 1)
+                t.column("playedAt", .datetime).notNull()
+            }
+            try db.create(index: "play_history_playedAt",
+                          on: "play_history", columns: ["playedAt"])
+        }
+
         return m
     }
 
@@ -379,6 +410,19 @@ public final class CatalogDB {
         return out
     }
 
+    /// Structured search filters applied as SQL WHERE clauses.
+    public struct SearchFilters: Sendable {
+        public var model: String?       // "6581", "8580"
+        public var clock: String?       // "PAL", "NTSC"
+        public var yearFrom: Int?       // e.g. 1985
+        public var yearTo: Int?         // e.g. 1992
+        public init() {}
+
+        var isEmpty: Bool {
+            model == nil && clock == nil && yearFrom == nil && yearTo == nil
+        }
+    }
+
     /// Full-text search across title/author/path.
     /// Empty/whitespace query returns rows ordered by the given sort columns.
     /// `sortedBy` maps column names to ascending/descending; when empty the
@@ -387,28 +431,105 @@ public final class CatalogDB {
     public func search(
         _ query: String,
         limit: Int? = nil,
-        sortedBy columns: [(column: String, ascending: Bool)] = []
+        sortedBy columns: [(column: String, ascending: Bool)] = [],
+        filters: SearchFilters = SearchFilters()
     ) throws -> [TuneRow] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
         let orderSQL = Self.orderClause(from: columns)
         let limitSQL = limit.map { " LIMIT \($0)" } ?? ""
 
+        // Build filter fragments
+        var filterParts: [String] = []
+        var filterArgs: [any DatabaseValueConvertible] = []
+        if let model = filters.model {
+            filterParts.append("tunes.model = ?")
+            filterArgs.append(model)
+        }
+        if let clock = filters.clock {
+            filterParts.append("tunes.clock = ?")
+            filterArgs.append(clock)
+        }
+        if let yearFrom = filters.yearFrom {
+            filterParts.append("CAST(substr(tunes.released, 1, 4) AS INTEGER) >= ?")
+            filterArgs.append(yearFrom)
+        }
+        if let yearTo = filters.yearTo {
+            filterParts.append("CAST(substr(tunes.released, 1, 4) AS INTEGER) <= ?")
+            filterArgs.append(yearTo)
+        }
+
         return try dbWriter.read { db in
             if q.isEmpty {
+                if filterParts.isEmpty {
+                    return try TuneRow.fetchAll(db, sql:
+                        "SELECT * FROM tunes ORDER BY \(orderSQL)\(limitSQL)")
+                }
+                let whereSQL = filterParts.joined(separator: " AND ")
                 return try TuneRow.fetchAll(db, sql:
-                    "SELECT * FROM tunes ORDER BY \(orderSQL)\(limitSQL)")
+                    "SELECT * FROM tunes WHERE \(whereSQL) ORDER BY \(orderSQL)\(limitSQL)",
+                    arguments: StatementArguments(filterArgs))
             }
             let tokens = q.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             guard !tokens.isEmpty else { return [] }
             let pattern = tokens.map { "\($0)*" }.joined(separator: " ")
 
+            var allArgs: [any DatabaseValueConvertible] = [pattern]
+            allArgs.append(contentsOf: filterArgs)
+            let filterSQL = filterParts.isEmpty ? "" : " AND " + filterParts.joined(separator: " AND ")
+
             return try TuneRow.fetchAll(db, sql: """
                 SELECT tunes.*
                 FROM tunes
                 JOIN tunes_fts ON tunes_fts.rowid = tunes.id
-                WHERE tunes_fts MATCH ?
+                WHERE tunes_fts MATCH ?\(filterSQL)
                 ORDER BY \(orderSQL)\(limitSQL)
-            """, arguments: [pattern])
+            """, arguments: StatementArguments(allArgs))
+        }
+    }
+
+    // MARK: Play History
+
+    /// Record a play event. Auto-prunes to the newest 1000 entries.
+    public func recordPlay(tuneId: Int64, subtune: Int = 1) throws {
+        try dbWriter.write { db in
+            var row = PlayHistoryRow(tuneId: tuneId, subtune: subtune)
+            try row.insert(db)
+            let count = try PlayHistoryRow.fetchCount(db)
+            if count > 1000 {
+                try db.execute(sql: """
+                    DELETE FROM play_history
+                    WHERE id NOT IN (
+                        SELECT id FROM play_history ORDER BY playedAt DESC LIMIT 1000
+                    )
+                """)
+            }
+        }
+    }
+
+    /// Recently played tunes, newest first, deduped by tuneId.
+    public func recentlyPlayed(limit: Int = 200) throws -> [TuneRow] {
+        try dbWriter.read { db in
+            try TuneRow.fetchAll(db, sql: """
+                SELECT tunes.* FROM tunes
+                JOIN (
+                    SELECT tuneId, MAX(playedAt) AS lastPlayed
+                    FROM play_history GROUP BY tuneId
+                ) h ON h.tuneId = tunes.id
+                ORDER BY h.lastPlayed DESC
+                LIMIT ?
+            """, arguments: [limit])
+        }
+    }
+
+    public func recentlyPlayedCount() throws -> Int {
+        try dbWriter.read { db in
+            try Int.fetchOne(db, sql: "SELECT COUNT(DISTINCT tuneId) FROM play_history") ?? 0
+        }
+    }
+
+    public func clearHistory() throws {
+        try dbWriter.write { db in
+            try PlayHistoryRow.deleteAll(db)
         }
     }
 

@@ -7,6 +7,15 @@ struct TransportBar: View {
         @Bindable var state = state
 
         HStack(spacing: 12) {
+            Button { state.toggleShuffle() } label: {
+                Image(systemName: "shuffle")
+                    .foregroundStyle(state.shuffleEnabled
+                        ? state.theme.textAccent
+                        : state.theme.textSecondary)
+            }
+            .buttonStyle(.plain)
+            .help("Shuffle")
+
             HStack(spacing: 4) {
                 Button { state.skipBackward() } label: {
                     Image(systemName: "backward.end.fill")
@@ -26,6 +35,17 @@ struct TransportBar: View {
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
+
+            Button { state.cycleRepeat() } label: {
+                Image(systemName: state.repeatMode.icon)
+                    .foregroundStyle(state.repeatMode == .off
+                        ? state.theme.textSecondary
+                        : state.theme.textAccent)
+            }
+            .buttonStyle(.plain)
+            .help(state.repeatMode == .off ? "Repeat off"
+                : state.repeatMode == .all ? "Repeat all"
+                : "Repeat one")
 
             if state.subtuneCount > 1 {
                 Text("sub \(state.currentSubtune)/\(state.subtuneCount)")

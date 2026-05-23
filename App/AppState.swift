@@ -28,14 +28,16 @@ public final class AppState {
         case browse
         case playlists                  // root: list of user playlists
         case playlist(Int64)            // viewing a single playlist by id
+        case recentlyPlayed             // play history
 
         /// Tab-bar grouping. `.playlists` and `.playlist(_)` share a tab.
         public var category: String {
             switch self {
-            case .all:       return "all"
-            case .favorites: return "favorites"
-            case .browse:    return "browse"
+            case .all:              return "all"
+            case .favorites:        return "favorites"
+            case .browse:           return "browse"
             case .playlists, .playlist: return "playlists"
+            case .recentlyPlayed:   return "recent"
             }
         }
     }
@@ -45,6 +47,7 @@ public final class AppState {
     public var favoriteIDs: Set<Int64> = []
 
     // MARK: Playlists
+    public var recentCount: Int = 0
     public var playlists: [Playlist] = []
     public var playlistCounts: [Int64: Int] = [:]
 
@@ -66,6 +69,21 @@ public final class AppState {
         }
     }
     public var secondaryViz: SecondaryVizMode = .peakMeter
+
+    // MARK: Shuffle & Repeat
+    public enum RepeatMode: String, CaseIterable, Sendable {
+        case off, all, one
+
+        public var icon: String {
+            switch self {
+            case .off, .all: return "repeat"
+            case .one:       return "repeat.1"
+            }
+        }
+    }
+    public var shuffleEnabled: Bool = false
+    public var repeatMode: RepeatMode = .off
+    private var shufflePlayed: Set<Int64> = []
 
     // MARK: Emulation config
     public var emulationConfig: EmulationConfig = EmulationConfig()
@@ -110,6 +128,16 @@ public final class AppState {
         }
     }
 
+    /// Builds a SearchFilters from the current filter UI state.
+    private func currentSearchFilters() -> CatalogDB.SearchFilters {
+        var f = CatalogDB.SearchFilters()
+        if filterModel != .any { f.model = filterModel.rawValue }
+        if filterClock != .any { f.clock = filterClock.rawValue }
+        if let y = Int(filterYearFrom), y > 0 { f.yearFrom = y }
+        if let y = Int(filterYearTo), y > 0 { f.yearTo = y }
+        return f
+    }
+
     /// Converts the current SwiftUI sort descriptors into SQL column names.
     private func sqlSortColumns() -> [(column: String, ascending: Bool)] {
         sortOrder.compactMap { kpc in
@@ -126,6 +154,31 @@ public final class AppState {
 
     // MARK: Search
     public var searchQuery: String = ""
+
+    // MARK: Search Filters (transient, not persisted)
+    public enum ModelFilter: String, CaseIterable, Sendable {
+        case any = "Any", mos6581 = "6581", mos8580 = "8580"
+    }
+    public enum ClockFilter: String, CaseIterable, Sendable {
+        case any = "Any", pal = "PAL", ntsc = "NTSC"
+    }
+    public var filterModel: ModelFilter = .any
+    public var filterClock: ClockFilter = .any
+    public var filterYearFrom: String = ""
+    public var filterYearTo: String = ""
+
+    public var hasActiveFilters: Bool {
+        filterModel != .any || filterClock != .any
+        || !filterYearFrom.isEmpty || !filterYearTo.isEmpty
+    }
+
+    public func clearFilters() {
+        filterModel = .any
+        filterClock = .any
+        filterYearFrom = ""
+        filterYearTo = ""
+        Task { try? await refreshSearch() }
+    }
 
     // MARK: Player
     public let player = SIDPlayer()
@@ -148,6 +201,8 @@ public final class AppState {
     private static let scrollerKey  = "showScroller.v1"
     private static let vizKey       = "showVisualizers.v1"
     private static let secondaryVizKey = "secondaryViz.v1"
+    private static let shuffleKey      = "shuffle.v1"
+    private static let repeatKey       = "repeatMode.v1"
     private static let sidModelKey    = "sidModel.v1"
     private static let clockKey       = "clock.v1"
     private static let digiBoostKey   = "digiBoost.v1"
@@ -168,6 +223,13 @@ public final class AppState {
            let mode = SecondaryVizMode(rawValue: raw) {
             secondaryViz = mode
         }
+        if UserDefaults.standard.object(forKey: Self.shuffleKey) != nil {
+            shuffleEnabled = UserDefaults.standard.bool(forKey: Self.shuffleKey)
+        }
+        if let raw = UserDefaults.standard.string(forKey: Self.repeatKey),
+           let mode = RepeatMode(rawValue: raw) {
+            repeatMode = mode
+        }
         loadEmulationConfig()
     }
 
@@ -176,6 +238,19 @@ public final class AppState {
         let i = all.firstIndex(of: secondaryViz) ?? 0
         secondaryViz = all[(i + 1) % all.count]
         UserDefaults.standard.set(secondaryViz.rawValue, forKey: Self.secondaryVizKey)
+    }
+
+    public func toggleShuffle() {
+        shuffleEnabled.toggle()
+        UserDefaults.standard.set(shuffleEnabled, forKey: Self.shuffleKey)
+        shufflePlayed.removeAll()
+    }
+
+    public func cycleRepeat() {
+        let all = RepeatMode.allCases
+        let i = all.firstIndex(of: repeatMode) ?? 0
+        repeatMode = all[(i + 1) % all.count]
+        UserDefaults.standard.set(repeatMode.rawValue, forKey: Self.repeatKey)
     }
 
     private func loadEmulationConfig() {
@@ -377,6 +452,7 @@ public final class AppState {
             }
 
             loadPlaylists()
+            recentCount = (try? db.recentlyPlayedCount()) ?? 0
             try await refreshSearch()
             self.bootstrap = ((try? db.count()) ?? 0) > 0 ? .ready : .notReady
         } catch {
@@ -465,7 +541,7 @@ public final class AppState {
         case .all:
             // Sorting is done in SQL — ORDER BY is instant even at 65k rows
             // and avoids the in-memory sort that was the old bottleneck.
-            let results = try db.search(searchQuery, sortedBy: sqlSortColumns())
+            let results = try db.search(searchQuery, sortedBy: sqlSortColumns(), filters: currentSearchFilters())
             self.rows = results.compactMap(TuneItem.init(row:))
             self.sortedRows = self.rows
             self.browseDirs = []
@@ -494,6 +570,12 @@ public final class AppState {
             self.rows = tunes.compactMap(TuneItem.init(row:))
             applySort()
 
+        case .recentlyPlayed:
+            let results = try db.recentlyPlayed(limit: 200)
+            self.rows = results.compactMap(TuneItem.init(row:))
+            self.sortedRows = self.rows
+            self.browseDirs = []
+
         case .playlists:
             self.rows = []
             self.sortedRows = []
@@ -508,6 +590,7 @@ public final class AppState {
             self.sortedRows = self.rows
             self.browseDirs = []
         }
+        shufflePlayed.removeAll()
     }
 
     // MARK: Playback
@@ -541,6 +624,8 @@ public final class AppState {
             isPlaying        = true
             lastError        = nil
             startTicker()
+            try? db.recordPlay(tuneId: tuneID, subtune: player.currentSong)
+            recentCount = (try? db.recentlyPlayedCount()) ?? recentCount
         } catch {
             lastError = error.localizedDescription
         }
@@ -583,13 +668,41 @@ public final class AppState {
     }
 
     private func jumpToAdjacentTrack(offset: Int) {
-        // Follow the visible sorted order, not storage order.
         let list = sortedRows
-        guard let id = currentTuneID,
-              let idx = list.firstIndex(where: { $0.id == id }),
-              !list.isEmpty else { return }
-        let next = (idx + offset + list.count) % list.count
-        let target = list[next].id
+        guard let id = currentTuneID, !list.isEmpty else { return }
+
+        if repeatMode == .one {
+            Task { await play(tuneID: id) }
+            return
+        }
+
+        let target: Int64
+
+        if shuffleEnabled {
+            shufflePlayed.insert(id)
+            let candidates = list.filter { !shufflePlayed.contains($0.id) }
+
+            if candidates.isEmpty {
+                if repeatMode == .off { stop(); return }
+                // Repeat-all: reset pass, avoid replaying current immediately
+                shufflePlayed.removeAll()
+                shufflePlayed.insert(id)
+                let fresh = list.filter { $0.id != id }
+                guard let pick = fresh.randomElement() else { stop(); return }
+                target = pick.id
+            } else {
+                target = candidates.randomElement()!.id
+            }
+        } else {
+            guard let idx = list.firstIndex(where: { $0.id == id }) else { return }
+            let next = idx + offset
+            if repeatMode == .off && (next < 0 || next >= list.count) {
+                stop()
+                return
+            }
+            target = list[((next % list.count) + list.count) % list.count].id
+        }
+
         selectedID = target
         Task { await play(tuneID: target) }
     }
@@ -632,6 +745,8 @@ public final class AppState {
             try? player.nextSong()
             currentSubtune = player.currentSong
             currentTime = 0
+        } else if repeatMode == .one, let id = currentTuneID {
+            Task { await play(tuneID: id) }
         } else {
             jumpToAdjacentTrack(offset: +1)
         }

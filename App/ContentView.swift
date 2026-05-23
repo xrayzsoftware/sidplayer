@@ -63,10 +63,11 @@ struct ContentView: View {
                 Divider()
 
                 switch state.browseMode {
-                case .browse:    BrowseView()
-                case .playlists: PlaylistsRootView()
-                case .playlist:  PlaylistDetailView()
-                default:         TrackListView()
+                case .browse:          BrowseView()
+                case .playlists:       PlaylistsRootView()
+                case .playlist:        PlaylistDetailView()
+                case .recentlyPlayed:  TrackListView()
+                default:               TrackListView()
                 }
 
                 Divider()
@@ -80,7 +81,7 @@ struct ContentView: View {
         .sheet(isPresented: $state.showSettingsSheet) {
             SettingsSheet()
         }
-        .task(id: state.searchQuery) {
+        .task(id: SearchTrigger(state)) {
             try? await Task.sleep(nanoseconds: 150_000_000)
             try? await state.refreshSearch()
         }
@@ -116,5 +117,23 @@ private struct SecondaryVisualizer: View {
             .help("Cycle visualizer (peak / waterfall / phosphor)")
             .padding(4)
         }
+    }
+}
+
+/// Composite value so `.task(id:)` fires on any search-related change.
+@MainActor
+private struct SearchTrigger: Equatable {
+    let query: String
+    let model: AppState.ModelFilter
+    let clock: AppState.ClockFilter
+    let yearFrom: String
+    let yearTo: String
+
+    init(_ s: AppState) {
+        query = s.searchQuery
+        model = s.filterModel
+        clock = s.filterClock
+        yearFrom = s.filterYearFrom
+        yearTo = s.filterYearTo
     }
 }
