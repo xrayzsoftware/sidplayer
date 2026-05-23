@@ -427,13 +427,13 @@ public final class CatalogDB {
             guard validColumns.contains(col) else { continue }
             let dir = asc ? "ASC" : "DESC"
             if textColumns.contains(col) {
-                parts.append("\(col) IS NULL, \(col) COLLATE NOCASE \(dir)")
+                parts.append("tunes.\(col) IS NULL, tunes.\(col) COLLATE NOCASE \(dir)")
             } else {
-                parts.append("\(col) IS NULL, \(col) \(dir)")
+                parts.append("tunes.\(col) IS NULL, tunes.\(col) \(dir)")
             }
         }
         if parts.isEmpty {
-            return "author IS NULL, author COLLATE NOCASE ASC, title IS NULL, title COLLATE NOCASE ASC"
+            return "tunes.author IS NULL, tunes.author COLLATE NOCASE ASC, tunes.title IS NULL, tunes.title COLLATE NOCASE ASC"
         }
         return parts.joined(separator: ", ")
     }
