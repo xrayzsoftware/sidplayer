@@ -41,12 +41,10 @@ private struct VoicePanel: View {
     let background: Color
     let centerLineColor: Color
 
-    @State private var tick: UInt64 = 0
-    private let timer = Timer.publish(every: 1.0 / 60.0, on: .main, in: .common).autoconnect()
-
     var body: some View {
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
         Canvas { ctx, size in
-            _ = tick
+            _ = timeline.date
             let snap = tap.snapshotFloats(count: 1024)
 
             let mid = size.height / 2
@@ -84,6 +82,6 @@ private struct VoicePanel: View {
             )
         }
         .background(background)
-        .onReceive(timer) { _ in tick &+= 1 }
+        }
     }
 }

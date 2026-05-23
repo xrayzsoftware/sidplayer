@@ -52,7 +52,6 @@ public final class AppState {
     public var theme: AppTheme = .systemDefault
     public var showScroller: Bool = true
     public var showVisualizers: Bool = true
-    public var allTabLimit: Int = 10_000
 
     // MARK: Visualizer mode
     public enum SecondaryVizMode: String, CaseIterable, Sendable {
@@ -89,10 +88,15 @@ public final class AppState {
 
     private var sortGen: UInt64 = 0
 
-    /// Sort is offloaded to a background task so clicking a column header
-    /// doesn't block the UI. We tag each request with a generation; if a
-    /// newer one starts, older results are discarded.
+    /// For .all mode, re-queries SQL with the current sort order — the
+    /// database handles ORDER BY instantly even at 65k rows. For smaller
+    /// data sets (favorites, browse, playlists) sorts in-memory on a
+    /// background task with generation tagging.
     public func applySort() {
+        if browseMode == .all {
+            Task { try? await refreshSearch() }
+            return
+        }
         sortGen &+= 1
         let myGen = sortGen
         let snapshot = rows
@@ -103,6 +107,20 @@ public final class AppState {
                 guard let self, self.sortGen == myGen else { return }
                 self.sortedRows = sorted
             }
+        }
+    }
+
+    /// Converts the current SwiftUI sort descriptors into SQL column names.
+    private func sqlSortColumns() -> [(column: String, ascending: Bool)] {
+        sortOrder.compactMap { kpc in
+            let col: String
+            if kpc.keyPath == \TuneItem.row.author          { col = "author" }
+            else if kpc.keyPath == \TuneItem.row.title      { col = "title" }
+            else if kpc.keyPath == \TuneItem.row.released   { col = "released" }
+            else if kpc.keyPath == \TuneItem.row.songs      { col = "songs" }
+            else if kpc.keyPath == \TuneItem.row.defaultLengthMs { col = "defaultLengthMs" }
+            else { return nil }
+            return (col, kpc.order == .forward)
         }
     }
 
@@ -129,7 +147,6 @@ public final class AppState {
     private static let themeKey     = "themeID.v1"
     private static let scrollerKey  = "showScroller.v1"
     private static let vizKey       = "showVisualizers.v1"
-    private static let allLimitKey  = "allTabLimit.v1"
     private static let secondaryVizKey = "secondaryViz.v1"
     private static let sidModelKey    = "sidModel.v1"
     private static let clockKey       = "clock.v1"
@@ -147,8 +164,6 @@ public final class AppState {
             showVisualizers = UserDefaults.standard.bool(forKey: Self.vizKey)
         }
         player.vizEnabled = showVisualizers
-        let savedLimit = UserDefaults.standard.integer(forKey: Self.allLimitKey)
-        if savedLimit > 0 { allTabLimit = savedLimit }
         if let raw = UserDefaults.standard.string(forKey: Self.secondaryVizKey),
            let mode = SecondaryVizMode(rawValue: raw) {
             secondaryViz = mode
@@ -198,12 +213,6 @@ public final class AppState {
         }
     }
 
-    public func setAllTabLimit(_ limit: Int) {
-        allTabLimit = limit
-        UserDefaults.standard.set(limit, forKey: Self.allLimitKey)
-        Task { try? await refreshSearch() }
-    }
-
     public func toggleScroller() {
         showScroller.toggle()
         UserDefaults.standard.set(showScroller, forKey: Self.scrollerKey)
@@ -249,12 +258,6 @@ public final class AppState {
     public func setBrowseMode(_ mode: BrowseMode) {
         browseMode = mode
         searchQuery = ""
-        // Clear stale rows synchronously so the new tab doesn't briefly
-        // render with the previous tab's data while refreshSearch is
-        // still pending.
-        rows = []
-        sortedRows = []
-        browseDirs = []
         if mode == .browse && browsePath.isEmpty { browsePath = "" }
         Task { try? await refreshSearch() }
     }
@@ -460,12 +463,12 @@ public final class AppState {
         guard let db = catalog else { return }
         switch browseMode {
         case .all:
-            // Cap configurable via Settings. Release builds handle 10k+
-            // comfortably; very large caps slow tab switching + sorting.
-            let results = try db.search(searchQuery, limit: allTabLimit)
+            // Sorting is done in SQL — ORDER BY is instant even at 65k rows
+            // and avoids the in-memory sort that was the old bottleneck.
+            let results = try db.search(searchQuery, sortedBy: sqlSortColumns())
             self.rows = results.compactMap(TuneItem.init(row:))
+            self.sortedRows = self.rows
             self.browseDirs = []
-            applySort()
 
         case .favorites:
             let ids = Array(favoriteIDs).sorted()

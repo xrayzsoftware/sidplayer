@@ -11,6 +11,11 @@ struct ContentView: View {
                 NowPlayingHeader()
                     .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
 
+                if state.currentTuneID != nil {
+                    InfoBar()
+                        .padding(.horizontal, 12).padding(.bottom, 8)
+                }
+
                 if state.showVisualizers {
                     HStack(spacing: 8) {
                         WaveformView(taps: state.player.voiceTaps)

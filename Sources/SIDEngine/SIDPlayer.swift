@@ -316,7 +316,7 @@ public final class SIDPlayer: @unchecked Sendable {
             // directly. Failures here are silently ignored — they're viz only,
             // they cannot stall the audio ring write below. Skipped entirely
             // when visualizers are off, saving the per-engine CPU cost.
-            if vizEnabled {
+            if _vizEnabled.get {
                 for (i, ve) in voiceEngines.enumerated() {
                     let m = ve.render(into: voiceScratch[i], count: n)
                     if m > 0 { voiceTaps[i].append(voiceScratch[i], count: m) }

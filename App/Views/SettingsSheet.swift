@@ -92,10 +92,6 @@ struct SettingsSheet: View {
 
             Divider().background(theme.separator)
 
-            BrowsingLimitSection()
-
-            Divider().background(theme.separator)
-
             ThemePickerSection()
         }
         .padding(20)
@@ -194,40 +190,6 @@ struct SettingsSheet: View {
                 get: { state.emulationConfig.digiBoost },
                 set: { var c = state.emulationConfig; c.digiBoost = $0; state.updateEmulationConfig(c) }
             )
-        }
-    }
-
-    private struct BrowsingLimitSection: View {
-        @Environment(AppState.self) private var state
-        private let options: [(label: String, value: Int)] = [
-            ("1,000",  1_000),
-            ("5,000",  5_000),
-            ("10,000", 10_000),
-            ("25,000", 25_000),
-            ("50,000", 50_000),
-            ("All",    1_000_000),
-        ]
-
-        var body: some View {
-            let theme = state.theme
-            VStack(alignment: .leading, spacing: 6) {
-                Text("All-tab row limit")
-                    .font(.headline)
-                    .foregroundStyle(theme.textPrimary)
-                Text("More rows = slower sorting and tab switching. 10,000 is comfortable on a Release build.")
-                    .font(.caption)
-                    .foregroundStyle(theme.textSecondary)
-                Picker("", selection: Binding(
-                    get: { state.allTabLimit },
-                    set: { state.setAllTabLimit($0) }
-                )) {
-                    ForEach(options, id: \.value) { opt in
-                        Text(opt.label).tag(opt.value)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-            }
         }
     }
 

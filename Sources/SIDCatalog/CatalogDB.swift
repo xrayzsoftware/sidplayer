@@ -380,31 +380,61 @@ public final class CatalogDB {
     }
 
     /// Full-text search across title/author/path.
-    /// Empty/whitespace query returns the first `limit` rows ordered by author/title.
-    public func search(_ query: String, limit: Int = 200) throws -> [TuneRow] {
+    /// Empty/whitespace query returns rows ordered by the given sort columns.
+    /// `sortedBy` maps column names to ascending/descending; when empty the
+    /// default is (author ASC, title ASC). `limit` caps the result count;
+    /// pass nil for no cap.
+    public func search(
+        _ query: String,
+        limit: Int? = nil,
+        sortedBy columns: [(column: String, ascending: Bool)] = []
+    ) throws -> [TuneRow] {
         let q = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let orderSQL = Self.orderClause(from: columns)
+        let limitSQL = limit.map { " LIMIT \($0)" } ?? ""
+
         return try dbWriter.read { db in
             if q.isEmpty {
-                return try TuneRow
-                    .order(Column("author"), Column("title"))
-                    .limit(limit)
-                    .fetchAll(db)
+                return try TuneRow.fetchAll(db, sql:
+                    "SELECT * FROM tunes ORDER BY \(orderSQL)\(limitSQL)")
             }
-            // FTS5 prefix search: append * to each token. Strip characters that
-            // would confuse the tokenizer.
             let tokens = q.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             guard !tokens.isEmpty else { return [] }
             let pattern = tokens.map { "\($0)*" }.joined(separator: " ")
 
-            let sql = """
+            return try TuneRow.fetchAll(db, sql: """
                 SELECT tunes.*
                 FROM tunes
                 JOIN tunes_fts ON tunes_fts.rowid = tunes.id
                 WHERE tunes_fts MATCH ?
-                ORDER BY tunes.author, tunes.title
-                LIMIT ?
-            """
-            return try TuneRow.fetchAll(db, sql: sql, arguments: [pattern, limit])
+                ORDER BY \(orderSQL)\(limitSQL)
+            """, arguments: [pattern])
         }
+    }
+
+    // MARK: SQL sort helpers
+
+    private static let textColumns: Set<String> =
+        ["title", "author", "released", "path", "format", "clock", "model"]
+    private static let validColumns: Set<String> =
+        textColumns.union(["songs", "defaultLengthMs", "version", "sidChips"])
+
+    private static func orderClause(
+        from columns: [(column: String, ascending: Bool)]
+    ) -> String {
+        var parts: [String] = []
+        for (col, asc) in columns {
+            guard validColumns.contains(col) else { continue }
+            let dir = asc ? "ASC" : "DESC"
+            if textColumns.contains(col) {
+                parts.append("\(col) IS NULL, \(col) COLLATE NOCASE \(dir)")
+            } else {
+                parts.append("\(col) IS NULL, \(col) \(dir)")
+            }
+        }
+        if parts.isEmpty {
+            return "author IS NULL, author COLLATE NOCASE ASC, title IS NULL, title COLLATE NOCASE ASC"
+        }
+        return parts.joined(separator: ", ")
     }
 }
