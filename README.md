@@ -6,12 +6,16 @@ Built on [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) for cycle-
 
 > **Status:** working, polished, but unsigned and pre-1.0. Built for personal use; happy to take pull requests.
 
+![SID Player screenshot](screenshot.png)
+
 ---
 
 ## Features
 
 - **One-click HVSC bootstrap.** Discovers the latest release via `hvsc.c64.org/api/v1/version/7z`, downloads the ~640 MB archive, extracts via the system `tar` (libarchive handles 7z natively on macOS), parses every `.sid` header into a SQLite catalog, and matches each tune to its HVSC `Songlengths.md5` entry.
-- **Three-tab catalog browser**: All (1000-row preview, FTS5 full-text search), Favorites (★ persisted via UserDefaults), Browse (HVSC directory tree with breadcrumb navigation).
+- **Five-tab catalog browser**: All (~60k tunes with FTS5 full-text search), Favorites (★ persisted), Browse (HVSC directory tree with breadcrumb), Recent (play history), and Playlists.
+- **Search filters** — narrow results by SID model (6581/8580), clock speed (PAL/NTSC), and year range, combined with text search.
+- **Shuffle & repeat** — shuffle mode picks random tracks from the current list; repeat modes: off, all, one.
 - **Sortable, themed track list** with title, composer, year, subtune count, and duration columns.
 - **Per-voice oscilloscope** — three additional libsidplayfp instances run in lockstep with the main engine, each with two voices muted, feeding three colored waveform traces. Audio path is independent so a viz-engine failure can't break sound.
 - **Cyclic secondary visualizer** — toggle between a Winamp-style 40-band peak meter, a scrolling FFT waterfall, and a phosphor-persistence oscilloscope. All vDSP-backed, log-spaced from 50 Hz to 12 kHz, and themed.
@@ -176,7 +180,6 @@ libsidplayfp is C++. Swift can't import C++ directly with full fidelity (no clas
 
 ## Known limitations
 
-- **All-tab is capped at 1000 rows.** SwiftUI `Table` Debug-build sort on 60k items takes seconds. A Release build is ~5–10× faster, and a future LazyVStack-based custom list would lift the cap entirely.
 - **Not signed / notarized.** Ad-hoc signed only — anyone but you will trip Gatekeeper. Developer ID signing + notarization + hardened runtime are TODO before public distribution.
 - **Distribution license:** libsidplayfp is GPLv2 and is statically linked into the app. Any distributed binary is therefore GPL. Fine for a personal build; matters if you ever want to ship commercially. The bundled license sits at `Sources/CSIDEngine/Vendor/LICENSE.libsidplayfp`.
 - **arm64 only by default.** The vendored libsidplayfp archive is arm64; producing a universal app requires lipo'ing in an x86_64 build (see Universal binary section above).
