@@ -5,6 +5,8 @@ A native macOS player for the [High Voltage SID Collection](https://hvsc.c64.org
 Built on [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) for cycle-accurate emulation, with a SwiftUI front-end that browses the entire ~60,000-tune HVSC catalog, plays per-voice oscilloscope traces in lockstep with the audio, and reads HVSC's STIL annotations as a scrolling C64-style marquee.
 
 > **Status:** working, polished, but unsigned and pre-1.0. Built for personal use; happy to take pull requests.
+>
+> 
 
 ![SID Player screenshot](screenshot.png)
 
