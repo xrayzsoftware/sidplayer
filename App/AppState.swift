@@ -84,6 +84,9 @@ public final class AppState {
     public var shuffleEnabled: Bool = false
     public var repeatMode: RepeatMode = .off
     private var shufflePlayed: Set<Int64> = []
+    /// Chronological order of tunes played in the current shuffle session, so
+    /// Previous/Next can walk the real order instead of always re-randomising.
+    private var shuffleHistory: [Int64] = []
 
     // MARK: Emulation config
     public var emulationConfig: EmulationConfig = EmulationConfig()
@@ -98,7 +101,16 @@ public final class AppState {
     /// when `rows` or `sortOrder` changes — sorting 60k items each body
     /// re-render was the bottleneck.
     public var sortedRows: [TuneItem] = []
-    public var selectedID: Int64?
+    public var selectedID: Int64? {
+        // Selecting a row is the single trigger for playback. Views only *set*
+        // this (table selection, taps); skip/auto-advance set it too. This
+        // replaces the old pattern where both an explicit play() call and a
+        // view's .onChange fired, double-loading every track.
+        didSet {
+            guard let id = selectedID, id != oldValue else { return }
+            Task { await play(tuneID: id) }
+        }
+    }
     public var sortOrder: [KeyPathComparator<TuneItem>] = [
         KeyPathComparator(\TuneItem.row.author, order: .forward),
         KeyPathComparator(\TuneItem.row.title,  order: .forward),
@@ -244,6 +256,7 @@ public final class AppState {
         shuffleEnabled.toggle()
         UserDefaults.standard.set(shuffleEnabled, forKey: Self.shuffleKey)
         shufflePlayed.removeAll()
+        shuffleHistory.removeAll()
     }
 
     public func cycleRepeat() {
@@ -590,7 +603,9 @@ public final class AppState {
             self.sortedRows = self.rows
             self.browseDirs = []
         }
+        // The visible list changed — restart the shuffle session.
         shufflePlayed.removeAll()
+        shuffleHistory.removeAll()
     }
 
     // MARK: Playback
@@ -667,31 +682,45 @@ public final class AppState {
         }
     }
 
+    /// Skip to an adjacent track. Repeat-one is deliberately *not* handled here
+    /// — a manual Next/Prev should move off the current track even with
+    /// repeat-one set; auto-advance handles the replay itself (see
+    /// `checkAutoAdvance`).
     private func jumpToAdjacentTrack(offset: Int) {
         let list = sortedRows
         guard let id = currentTuneID, !list.isEmpty else { return }
 
-        if repeatMode == .one {
-            Task { await play(tuneID: id) }
-            return
-        }
-
         let target: Int64
 
         if shuffleEnabled {
+            // Record the current track in the shuffle session before moving, so
+            // Previous can step back through the order actually played.
+            if !shuffleHistory.contains(id) { shuffleHistory.append(id) }
             shufflePlayed.insert(id)
-            let candidates = list.filter { !shufflePlayed.contains($0.id) }
 
-            if candidates.isEmpty {
-                if repeatMode == .off { stop(); return }
-                // Repeat-all: reset pass, avoid replaying current immediately
-                shufflePlayed.removeAll()
-                shufflePlayed.insert(id)
-                let fresh = list.filter { $0.id != id }
-                guard let pick = fresh.randomElement() else { stop(); return }
-                target = pick.id
+            if offset < 0 {
+                // Previous: walk back through real play order; stop at the start.
+                guard let cur = shuffleHistory.firstIndex(of: id), cur > 0 else { return }
+                target = shuffleHistory[cur - 1]
+            } else if let cur = shuffleHistory.firstIndex(of: id),
+                      cur < shuffleHistory.count - 1 {
+                // Next after a Previous: replay the already-chosen forward order.
+                target = shuffleHistory[cur + 1]
             } else {
-                target = candidates.randomElement()!.id
+                // Next at the head: pick a fresh random unplayed track.
+                let candidates = list.filter { !shufflePlayed.contains($0.id) }
+                if candidates.isEmpty {
+                    if repeatMode == .off { stop(); return }
+                    // Repeat-all: start a fresh pass, avoid replaying current.
+                    shufflePlayed = [id]
+                    shuffleHistory = [id]
+                    let fresh = list.filter { $0.id != id }
+                    guard let pick = fresh.randomElement() else { stop(); return }
+                    target = pick.id
+                } else {
+                    target = candidates.randomElement()!.id
+                }
+                shuffleHistory.append(target)
             }
         } else {
             guard let idx = list.firstIndex(where: { $0.id == id }) else { return }
@@ -703,8 +732,14 @@ public final class AppState {
             target = list[((next % list.count) + list.count) % list.count].id
         }
 
-        selectedID = target
-        Task { await play(tuneID: target) }
+        // Normally drives playback via selectedID's didSet. When target already
+        // equals the current selection (a 1-track repeat-all wrap), the didSet
+        // won't fire, so replay explicitly.
+        if target == selectedID {
+            Task { await play(tuneID: target) }
+        } else {
+            selectedID = target
+        }
     }
 
     public func nextSubtune() {

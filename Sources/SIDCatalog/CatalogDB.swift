@@ -245,6 +245,71 @@ public final class CatalogDB {
         }
     }
 
+    /// Insert a new tune, or update the existing row matched by `path`,
+    /// preserving its `id`. Stable ids across a re-index are what let playlist
+    /// and play-history references survive — they key on the tune id, so a
+    /// delete-and-reinsert (the old `clear()` approach) silently emptied every
+    /// playlist and the Recent list.
+    @discardableResult
+    public func upsert(tune: TuneRow, lengths: [Int]) throws -> Int64 {
+        try dbWriter.write { db in
+            var t = tune
+            let defaultIdx = max(t.startSong - 1, 0)
+            if defaultIdx < lengths.count {
+                t.defaultLengthMs = lengths[defaultIdx]
+            }
+            if let existing = try TuneRow.filter(Column("path") == t.path).fetchOne(db),
+               let id = existing.id {
+                t.id = id
+                try t.update(db)
+                try LengthRow.filter(Column("tuneId") == id).deleteAll(db)
+                for (i, ms) in lengths.enumerated() {
+                    try LengthRow(tuneId: id, subtune: i, durationMs: ms).insert(db)
+                }
+                return id
+            }
+            try t.insert(db)
+            let id = t.id ?? db.lastInsertedRowID
+            for (i, ms) in lengths.enumerated() {
+                try LengthRow(tuneId: id, subtune: i, durationMs: ms).insert(db)
+            }
+            return id
+        }
+    }
+
+    /// Remove catalog rows whose `path` is not in `keep` — files that vanished
+    /// since the last index. Cascades to lengths, playlist_tracks and
+    /// play_history (the file is genuinely gone). Run once after a re-index.
+    public func deleteTunesExcept(paths keep: Set<String>) throws {
+        try dbWriter.write { db in
+            let all = try String.fetchAll(db, sql: "SELECT path FROM tunes")
+            for path in all where !keep.contains(path) {
+                try db.execute(sql: "DELETE FROM tunes WHERE path = ?", arguments: [path])
+            }
+        }
+    }
+
+    /// Re-densify playlist positions to 0..n-1. A cascaded delete of a stale
+    /// tune can leave gaps, and removal-by-index assumes dense positions.
+    public func normalizePlaylistPositions() throws {
+        try dbWriter.write { db in
+            let ids = try Int64.fetchAll(db, sql: "SELECT id FROM playlists")
+            for pid in ids {
+                let tracks = try PlaylistTrack
+                    .filter(Column("playlistId") == pid)
+                    .order(Column("position"))
+                    .fetchAll(db)
+                if tracks.enumerated().allSatisfy({ $0.offset == $0.element.position }) {
+                    continue   // already dense
+                }
+                try PlaylistTrack.filter(Column("playlistId") == pid).deleteAll(db)
+                for (i, t) in tracks.enumerated() {
+                    try PlaylistTrack(playlistId: pid, position: i, tuneId: t.tuneId).insert(db)
+                }
+            }
+        }
+    }
+
     public func tune(id: Int64) throws -> TuneRow? {
         try dbWriter.read { db in try TuneRow.fetchOne(db, key: id) }
     }

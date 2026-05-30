@@ -33,7 +33,10 @@ public actor HVSCIndexer {
         }
         let total = paths.count
 
-        try db.clear()
+        // Upsert by path instead of clear-and-reinsert so tune ids stay stable
+        // and playlist / play-history references survive the re-index.
+        var seenPaths = Set<String>()
+        seenPaths.reserveCapacity(total)
 
         var processed = 0
         var inserted = 0
@@ -66,9 +69,10 @@ public actor HVSCIndexer {
                     clock:    header.clock.displayName,
                     model:    header.model.displayName,
                     sidChips: header.sidChips,
-                    defaultLengthMs: nil  // CatalogDB.insert fills this
+                    defaultLengthMs: nil  // CatalogDB.upsert fills this
                 )
-                _ = try db.insert(tune: row, lengths: lengths)
+                _ = try db.upsert(tune: row, lengths: lengths)
+                seenPaths.insert(relPath)
                 inserted += 1
             } catch {
                 // Skip unreadable / malformed tunes but keep going.
@@ -84,6 +88,11 @@ public actor HVSCIndexer {
                 await Task.yield()
             }
         }
+
+        // Drop rows for files that no longer exist, then heal any playlist
+        // position gaps their removal may have cascaded.
+        try db.deleteTunesExcept(paths: seenPaths)
+        try db.normalizePlaylistPositions()
 
         progress?(.init(processed: processed, inserted: inserted, total: total, currentPath: nil))
         return inserted

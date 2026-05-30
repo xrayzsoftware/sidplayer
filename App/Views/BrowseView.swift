@@ -126,8 +126,8 @@ private struct BrowseList: View {
                         }
                         .contentShape(Rectangle())
                         .onTapGesture {
+                            // selectedID's didSet starts playback.
                             state.selectedID = item.id
-                            Task { await state.play(tuneID: item.id) }
                         }
                         .tag(item.id)
                     }

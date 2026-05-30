@@ -17,28 +17,32 @@ struct FilterBar: View {
                     .font(.system(size: 13))
                     .foregroundStyle(theme.textPrimary)
 
-                if state.hasActiveFilters {
-                    Button { state.clearFilters() } label: {
-                        Image(systemName: "xmark.circle.fill")
-                            .foregroundStyle(theme.textSecondary)
+                // Model/clock/year filters only affect the All tab's SQL query,
+                // so only offer them there.
+                if state.browseMode == .all {
+                    if state.hasActiveFilters {
+                        Button { state.clearFilters() } label: {
+                            Image(systemName: "xmark.circle.fill")
+                                .foregroundStyle(theme.textSecondary)
+                        }
+                        .buttonStyle(.plain)
+                        .help("Clear all filters")
+                    }
+
+                    Button { withAnimation(.easeInOut(duration: 0.15)) { showFilters.toggle() } } label: {
+                        Image(systemName: "line.3.horizontal.decrease.circle")
+                            .foregroundStyle(state.hasActiveFilters
+                                ? theme.textAccent
+                                : theme.textSecondary)
                     }
                     .buttonStyle(.plain)
-                    .help("Clear all filters")
+                    .help("Show/hide filters")
                 }
-
-                Button { withAnimation(.easeInOut(duration: 0.15)) { showFilters.toggle() } } label: {
-                    Image(systemName: "line.3.horizontal.decrease.circle")
-                        .foregroundStyle(state.hasActiveFilters
-                            ? theme.textAccent
-                            : theme.textSecondary)
-                }
-                .buttonStyle(.plain)
-                .help("Show/hide filters")
             }
             .padding(.horizontal, 12)
             .padding(.vertical, 8)
 
-            if showFilters {
+            if showFilters && state.browseMode == .all {
                 HStack(spacing: 12) {
                     filterPicker("Chip", values: AppState.ModelFilter.allCases,
                                  current: state.filterModel) { state.filterModel = $0 }

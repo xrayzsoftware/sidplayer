@@ -69,10 +69,8 @@ struct TrackListView: View {
                 rowContextMenu(for: id)
             }
         }
-        .onChange(of: state.selectedID) { _, newID in
-            guard let id = newID else { return }
-            Task { await state.play(tuneID: id) }
-        }
+        // Playback is driven by selectedID's didSet in AppState — no onChange
+        // here, which would double-trigger play() on skip/auto-advance.
     }
 
     @ViewBuilder
