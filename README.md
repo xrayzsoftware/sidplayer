@@ -4,11 +4,13 @@ A native macOS player for the [High Voltage SID Collection](https://hvsc.c64.org
 
 Built on [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) for cycle-accurate emulation, with a SwiftUI front-end that browses the entire ~60,000-tune HVSC catalog, plays per-voice oscilloscope traces in lockstep with the audio, and reads HVSC's STIL annotations as a scrolling C64-style marquee.
 
-> **Status:** working, polished, but unsigned and pre-1.0. Built for personal use; happy to take pull requests.
+> **Status:** working, polished, signed & notarized — still pre-1.0. Built for personal use; happy to take pull requests.
 >
 > 
 
 ![SID Player screenshot](screenshot.png)
+
+**Download:** grab the latest signed & notarized build from the [Releases page](https://github.com/xrayzsoftware/sidplayer/releases/latest) — Apple Silicon (M1+), macOS 14+.
 
 ---
 
@@ -182,7 +184,6 @@ libsidplayfp is C++. Swift can't import C++ directly with full fidelity (no clas
 
 ## Known limitations
 
-- **Not signed / notarized.** Ad-hoc signed only — anyone but you will trip Gatekeeper. Developer ID signing + notarization + hardened runtime are TODO before public distribution.
 - **Distribution license:** libsidplayfp is GPLv2 and is statically linked into the app. Any distributed binary is therefore GPL. Fine for a personal build; matters if you ever want to ship commercially. The bundled license sits at `Sources/CSIDEngine/Vendor/LICENSE.libsidplayfp`.
 - **arm64 only by default.** The vendored libsidplayfp archive is arm64; producing a universal app requires lipo'ing in an x86_64 build (see Universal binary section above).
 - **Title-bar text contrast** on lighter themes (Solarized Light, etc.) can be off — macOS computes the title color from the window appearance rather than your theme palette.
