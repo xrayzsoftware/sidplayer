@@ -6,5 +6,8 @@ Package.resolved
 # Xcode project is generated from project.yml via `xcodegen generate`.
 *.xcodeproj/
 
+# Build/distribution artifacts (DMGs, notarization staging) — ship via Releases.
+build/
+
 # HVSC redistribution terms vary per tune — keep fixtures out of git.
 Tests/Fixtures/

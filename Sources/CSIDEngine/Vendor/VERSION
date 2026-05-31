@@ -1,0 +1,31 @@
+libsidplayfp 3.0.0
+
+Vendored here:
+  lib/libsidplayfp.a          prebuilt static library (arm64)
+  include/sidplayfp/          public headers
+  LICENSE.libsidplayfp        license text (GNU GPL v2 or later)
+
+Provenance (verified):
+  lib/libsidplayfp.a is byte-for-byte identical to the Homebrew
+  "libsidplayfp 3.0.0" bottle (sha256
+  8e479bf2fee0f6c91dec49a732a475a22b3ad3d878ad8c033e46fb1361aa3b05).
+  Homebrew built that bottle from the upstream v3.0.0 release tarball,
+  pinned by checksum in its formula. The version is confirmed by
+  include/sidplayfp/sidversion.h (MAJ 3 / MIN 0 / LEV 0) and the
+  "3.0.0" string embedded in the archive.
+
+Upstream:  https://github.com/libsidplayfp/libsidplayfp
+License:   GNU General Public License, version 2 or later.
+
+GPL corresponding source: the source that corresponds to the bundled
+binary is the upstream libsidplayfp 3.0.0 release tarball:
+  https://github.com/libsidplayfp/libsidplayfp/releases/download/v3.0.0/libsidplayfp-3.0.0.tar.gz
+
+To rebuild this static library from that source (autotools; requires
+autoconf/automake/libtool, e.g. `brew install autoconf automake libtool`):
+  ./configure --enable-static --disable-shared && make
+or simply re-vendor the Homebrew bottle:
+  brew install libsidplayfp   # pins an exact upstream version + checksum
+  cp "$(brew --prefix libsidplayfp)/lib/libsidplayfp.a" lib/
+If you bump the version, copy the matching headers from the same source
+into include/sidplayfp/ so headers and library stay in sync.

@@ -200,6 +200,6 @@ libsidplayfp is C++. Swift can't import C++ directly with full fidelity (no clas
 
 ## License
 
-Source code in this repository: MIT.
+Source code in this repository: MIT — see [`LICENSE`](LICENSE).
 
-`libsidplayfp` (statically linked in) is GPLv2-or-later — see `Sources/CSIDEngine/Vendor/LICENSE.libsidplayfp`. Distributing the built `.app` therefore requires GPL compliance: the binary as a whole becomes GPL, and you must offer the corresponding source (libsidplayfp's source, plus this repo).
+`libsidplayfp` **3.0.0** (statically linked in) is GPLv2-or-later — see `Sources/CSIDEngine/Vendor/LICENSE.libsidplayfp`, with the pinned version and corresponding-source pointer in `Sources/CSIDEngine/Vendor/VERSION`. Distributing the built `.app` therefore requires GPL compliance: the binary as a whole becomes GPL, and you must offer the corresponding source (libsidplayfp's source at that version, plus this repo).
