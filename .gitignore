@@ -11,3 +11,6 @@ build/
 
 # HVSC redistribution terms vary per tune — keep fixtures out of git.
 Tests/Fixtures/
+
+# Agent instructions — kept local, not published.
+CLAUDE.md
