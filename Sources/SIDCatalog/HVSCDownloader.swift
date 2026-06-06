@@ -156,45 +156,77 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
         to destination: URL,
         progress: @escaping (Int64, Int64?) -> Void
     ) async throws {
-        let session = URLSession(configuration: .ephemeral)
+        try? FileManager.default.removeItem(at: destination)
+
+        // A delegate-driven download task streams to disk in the URL loading
+        // system's own chunks. (Iterating `URLSession.bytes` instead vends one
+        // UInt8 per `await` — ~250M suspensions for the HVSC archive.)
+        let delegate = DownloadDelegate(destination: destination, onProgress: progress)
+        let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
 
-        let (asyncBytes, response) = try await session.bytes(from: url)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw HVSCError.networkError("download HTTP \((response as? HTTPURLResponse)?.statusCode ?? -1)")
+        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+            delegate.continuation = cont
+            session.downloadTask(with: url).resume()
         }
-        let total = http.expectedContentLength > 0 ? http.expectedContentLength : nil
+    }
+}
 
-        let fm = FileManager.default
-        try? fm.removeItem(at: destination)
-        fm.createFile(atPath: destination.path, contents: nil)
-        guard let handle = try? FileHandle(forWritingTo: destination) else {
-            throw HVSCError.extractionFailed("couldn't open \(destination.path) for writing")
-        }
-        defer { try? handle.close() }
+/// Bridges a delegate-based `URLSessionDownloadTask` to async/await: streams to
+/// disk efficiently, forwards throttled byte-count progress, and resumes the
+/// continuation once the file is in place or on error.
+private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
+    private let destination: URL
+    private let onProgress: (Int64, Int64?) -> Void
+    private var nextReport: Int64 = 0
+    private let reportEvery: Int64 = 512 * 1024  // 512 KB granularity
+    var continuation: CheckedContinuation<Void, Error>?
 
-        var buffer = Data()
-        buffer.reserveCapacity(1 << 20) // 1 MB
-        var totalWritten: Int64 = 0
-        var nextReport: Int64 = 0
-        let reportEvery: Int64 = 512 * 1024  // 512 KB granularity
+    init(destination: URL, onProgress: @escaping (Int64, Int64?) -> Void) {
+        self.destination = destination
+        self.onProgress = onProgress
+    }
 
-        for try await byte in asyncBytes {
-            buffer.append(byte)
-            if buffer.count >= 1 << 20 {
-                try handle.write(contentsOf: buffer)
-                totalWritten += Int64(buffer.count)
-                buffer.removeAll(keepingCapacity: true)
-                if totalWritten >= nextReport {
-                    progress(totalWritten, total)
-                    nextReport = totalWritten + reportEvery
-                }
-            }
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didWriteData bytesWritten: Int64,
+                    totalBytesWritten: Int64,
+                    totalBytesExpectedToWrite: Int64) {
+        guard totalBytesWritten >= nextReport else { return }
+        nextReport = totalBytesWritten + reportEvery
+        let total = totalBytesExpectedToWrite > 0 ? totalBytesExpectedToWrite : nil
+        onProgress(totalBytesWritten, total)
+    }
+
+    func urlSession(_ session: URLSession,
+                    downloadTask: URLSessionDownloadTask,
+                    didFinishDownloadingTo location: URL) {
+        if let http = downloadTask.response as? HTTPURLResponse,
+           !(200..<300).contains(http.statusCode) {
+            resume(throwing: HVSCError.networkError("download HTTP \(http.statusCode)"))
+            return
         }
-        if !buffer.isEmpty {
-            try handle.write(contentsOf: buffer)
-            totalWritten += Int64(buffer.count)
+        // Must move synchronously — the system deletes `location` as soon as
+        // this delegate method returns.
+        do {
+            try FileManager.default.moveItem(at: location, to: destination)
+            continuation?.resume()
+            continuation = nil
+        } catch {
+            resume(throwing: HVSCError.extractionFailed("couldn't save download: \(error.localizedDescription)"))
         }
-        progress(totalWritten, total)
+    }
+
+    func urlSession(_ session: URLSession,
+                    task: URLSessionTask,
+                    didCompleteWithError error: Error?) {
+        // Success is resumed in didFinishDownloadingTo; this covers failures
+        // (and is a no-op after a successful finish — continuation is nil).
+        if let error { resume(throwing: HVSCError.networkError(error.localizedDescription)) }
+    }
+
+    private func resume(throwing error: Error) {
+        continuation?.resume(throwing: error)
+        continuation = nil
     }
 }

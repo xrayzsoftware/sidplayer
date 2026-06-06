@@ -38,12 +38,29 @@ public actor HVSCIndexer {
         var seenPaths = Set<String>()
         seenPaths.reserveCapacity(total)
 
+        // Accumulate upserts and commit them in batches — one transaction per
+        // tune dominated re-index time at ~55k files.
+        let batchSize = 500
+        var batch: [(tune: TuneRow, lengths: [Int])] = []
+        batch.reserveCapacity(batchSize)
+
         var processed = 0
         var inserted = 0
+
+        func flush() throws {
+            guard !batch.isEmpty else { return }
+            _ = try db.upsert(tunes: batch)
+            inserted += batch.count
+            batch.removeAll(keepingCapacity: true)
+        }
+
         for url in paths {
             processed += 1
             do {
-                let header = try PSIDHeader(contentsOf: url)
+                // Parse only the leading header bytes; the full file is read
+                // once more below by the MD5 pass, which genuinely needs it.
+                guard let headerData = Self.readHeader(url) else { continue }
+                let header = try PSIDHeader(data: headerData)
                 guard let md5 = SIDPlayerEngine.md5(forFileAt: url.path) else {
                     continue
                 }
@@ -71,12 +88,15 @@ public actor HVSCIndexer {
                     sidChips: header.sidChips,
                     defaultLengthMs: nil  // CatalogDB.upsert fills this
                 )
-                _ = try db.upsert(tune: row, lengths: lengths)
+                batch.append((tune: row, lengths: lengths))
                 seenPaths.insert(relPath)
-                inserted += 1
             } catch {
                 // Skip unreadable / malformed tunes but keep going.
             }
+
+            // Commit a full batch. Kept outside the per-tune `do` so a DB write
+            // failure propagates rather than being swallowed as a "bad tune".
+            if batch.count >= batchSize { try flush() }
 
             if processed % 250 == 0, let progress {
                 progress(.init(
@@ -88,6 +108,7 @@ public actor HVSCIndexer {
                 await Task.yield()
             }
         }
+        try flush()
 
         // Drop rows for files that no longer exist, then heal any playlist
         // position gaps their removal may have cascaded.
@@ -115,6 +136,15 @@ public actor HVSCIndexer {
             }
         }
         return out
+    }
+
+    /// Reads just the leading header bytes (enough for `PSIDHeader`) instead of
+    /// pulling the whole tune into memory — across ~55k files that's a lot of
+    /// avoided I/O, since only the first ~0x7E bytes are parsed.
+    private static func readHeader(_ url: URL, maxBytes: Int = 128) -> Data? {
+        guard let handle = try? FileHandle(forReadingFrom: url) else { return nil }
+        defer { try? handle.close() }
+        return try? handle.read(upToCount: maxBytes)
     }
 }
 

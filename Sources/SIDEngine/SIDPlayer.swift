@@ -38,8 +38,11 @@ public final class SIDPlayer: @unchecked Sendable {
     /// voice engine failures cannot break the audible mix.
     public let voiceTaps: [VizTap]
     private let voiceEngines: [SIDPlayerEngine]
-    /// When false, the producer thread skips rendering the voice engines —
-    /// saves ~3% CPU when the per-voice waveform is hidden.
+    /// When false, the producer thread skips rendering the three voice engines.
+    /// Each is a full C64+SID emulation — the per-voice scopes can't be derived
+    /// from the main engine's already-mixed output, and the C64 runs at ~1 MHz
+    /// regardless of output sample rate, so they roughly triple the emulator's
+    /// CPU cost. Hiding the visualizers is what reclaims it.
     public var vizEnabled: Bool {
         get { _vizEnabled.get }
         set { _vizEnabled.set(newValue) }

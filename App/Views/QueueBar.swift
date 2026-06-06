@@ -39,11 +39,12 @@ struct QueueBar: View {
             return "shuffle"
         }
         if let id = state.currentTuneID,
-           let idx = state.sortedRows.firstIndex(where: { $0.id == id }),
-           !state.sortedRows.isEmpty {
-            let next = (idx + 1) % state.sortedRows.count
-            let r = state.sortedRows[next].row
-            return "\(r.title ?? "—") — \(r.author ?? "—")"
+           let idx = state.playQueue.firstIndex(of: id),
+           !state.playQueue.isEmpty {
+            let next = (idx + 1) % state.playQueue.count
+            if let r = try? state.catalog?.tune(id: state.playQueue[next]) {
+                return "\(r.title ?? "—") — \(r.author ?? "—")"
+            }
         }
         return "—"
     }

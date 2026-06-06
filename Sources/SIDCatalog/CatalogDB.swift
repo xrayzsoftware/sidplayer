@@ -118,7 +118,10 @@ public struct PlayHistoryRow: Codable, FetchableRecord, MutablePersistableRecord
 
 // MARK: - DB
 
-public final class CatalogDB {
+// Safe to share across threads: the only stored property is a GRDB
+// `DatabaseWriter` (itself `Sendable`; a pool serializes its own access), so
+// reads can run off the main actor — see `AppState.refreshSearch`.
+public final class CatalogDB: Sendable {
     public let dbWriter: any DatabaseWriter
 
     /// Open an on-disk catalog at `url`. Runs migrations.
@@ -252,29 +255,43 @@ public final class CatalogDB {
     /// playlist and the Recent list.
     @discardableResult
     public func upsert(tune: TuneRow, lengths: [Int]) throws -> Int64 {
+        try dbWriter.write { db in try Self.upsertOne(db, tune: tune, lengths: lengths) }
+    }
+
+    /// Batch variant: upserts many tunes in a single transaction. Re-indexing
+    /// ~55k files with one `write` (one transaction) per row was the dominant
+    /// cost; batching collapses it to a handful of transactions. Returns each
+    /// input's row id, in order.
+    @discardableResult
+    public func upsert(tunes: [(tune: TuneRow, lengths: [Int])]) throws -> [Int64] {
         try dbWriter.write { db in
-            var t = tune
-            let defaultIdx = max(t.startSong - 1, 0)
-            if defaultIdx < lengths.count {
-                t.defaultLengthMs = lengths[defaultIdx]
-            }
-            if let existing = try TuneRow.filter(Column("path") == t.path).fetchOne(db),
-               let id = existing.id {
-                t.id = id
-                try t.update(db)
-                try LengthRow.filter(Column("tuneId") == id).deleteAll(db)
-                for (i, ms) in lengths.enumerated() {
-                    try LengthRow(tuneId: id, subtune: i, durationMs: ms).insert(db)
-                }
-                return id
-            }
-            try t.insert(db)
-            let id = t.id ?? db.lastInsertedRowID
+            try tunes.map { try Self.upsertOne(db, tune: $0.tune, lengths: $0.lengths) }
+        }
+    }
+
+    /// One upsert performed inside a caller-provided transaction.
+    private static func upsertOne(_ db: Database, tune: TuneRow, lengths: [Int]) throws -> Int64 {
+        var t = tune
+        let defaultIdx = max(t.startSong - 1, 0)
+        if defaultIdx < lengths.count {
+            t.defaultLengthMs = lengths[defaultIdx]
+        }
+        if let existing = try TuneRow.filter(Column("path") == t.path).fetchOne(db),
+           let id = existing.id {
+            t.id = id
+            try t.update(db)
+            try LengthRow.filter(Column("tuneId") == id).deleteAll(db)
             for (i, ms) in lengths.enumerated() {
                 try LengthRow(tuneId: id, subtune: i, durationMs: ms).insert(db)
             }
             return id
         }
+        try t.insert(db)
+        let id = t.id ?? db.lastInsertedRowID
+        for (i, ms) in lengths.enumerated() {
+            try LengthRow(tuneId: id, subtune: i, durationMs: ms).insert(db)
+        }
+        return id
     }
 
     /// Remove catalog rows whose `path` is not in `keep` — files that vanished

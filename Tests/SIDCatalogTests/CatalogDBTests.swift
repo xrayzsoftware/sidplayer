@@ -101,6 +101,27 @@ final class CatalogDBTests: XCTestCase {
         XCTAssertEqual(try db.count(), 0)
     }
 
+    func testBatchUpsertInsertsAndPreservesIDs() throws {
+        let db = try CatalogDB()
+        let ids = try db.upsert(tunes: [
+            (tune: makeRow(path: "a.sid", title: "A", author: "X"), lengths: [10_000]),
+            (tune: makeRow(path: "b.sid", title: "B", author: "Y"), lengths: [20_000, 30_000]),
+        ])
+        XCTAssertEqual(ids.count, 2)
+        XCTAssertEqual(try db.count(), 2)
+        XCTAssertEqual(try db.tune(id: ids[0])?.title, "A")
+        XCTAssertEqual(try db.lengths(tuneId: ids[1]).map(\.durationMs), [20_000, 30_000])
+
+        // Re-upserting an existing path updates in place: same id, replaced lengths.
+        let ids2 = try db.upsert(tunes: [
+            (tune: makeRow(path: "a.sid", title: "A2", author: "X"), lengths: [11_000]),
+        ])
+        XCTAssertEqual(ids2, [ids[0]], "upsert must preserve the id for an existing path")
+        XCTAssertEqual(try db.count(), 2)
+        XCTAssertEqual(try db.tune(id: ids[0])?.title, "A2")
+        XCTAssertEqual(try db.lengths(tuneId: ids[0]).map(\.durationMs), [11_000])
+    }
+
     func testDuplicatePathRejected() throws {
         let db = try CatalogDB()
         _ = try db.insert(tune: makeRow(path: "dup.sid", title: "A", author: "X"), lengths: [])

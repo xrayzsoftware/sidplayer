@@ -88,6 +88,15 @@ public final class AppState {
     /// Previous/Next can walk the real order instead of always re-randomising.
     private var shuffleHistory: [Int64] = []
 
+    /// Snapshot of the list playback is walking, captured when the user starts
+    /// a track. Skip / auto-advance / shuffle operate on this — not the live
+    /// view — so switching tab/filter mid-playback doesn't silently change (or
+    /// dead-end) what plays next.
+    public private(set) var playQueue: [Int64] = []
+    /// True only while skip/auto-advance is assigning `selectedID`, so its
+    /// didSet doesn't re-snapshot the queue from the (possibly different) view.
+    private var navigatingWithinQueue = false
+
     // MARK: Emulation config
     public var emulationConfig: EmulationConfig = EmulationConfig()
 
@@ -108,6 +117,13 @@ public final class AppState {
         // view's .onChange fired, double-loading every track.
         didSet {
             guard let id = selectedID, id != oldValue else { return }
+            if !navigatingWithinQueue {
+                // A user pick from the current view: that view becomes the play
+                // queue, and a fresh shuffle session starts over it.
+                playQueue = sortedRows.map(\.id)
+                shufflePlayed.removeAll()
+                shuffleHistory.removeAll()
+            }
             Task { await play(tuneID: id) }
         }
     }
@@ -117,6 +133,7 @@ public final class AppState {
     ]
 
     private var sortGen: UInt64 = 0
+    private var searchGen: UInt64 = 0
 
     /// For .all mode, re-queries SQL with the current sort order — the
     /// database handles ORDER BY instantly even at 65k rows. For smaller
@@ -550,13 +567,25 @@ public final class AppState {
 
     public func refreshSearch() async throws {
         guard let db = catalog else { return }
+        // Bump every call so an in-flight (off-main) .all query knows it's been
+        // superseded — e.g. the user switched tab/filter while it ran.
+        searchGen &+= 1
+        let gen = searchGen
         switch browseMode {
         case .all:
-            // Sorting is done in SQL — ORDER BY is instant even at 65k rows
-            // and avoids the in-memory sort that was the old bottleneck.
-            let results = try db.search(searchQuery, sortedBy: sqlSortColumns(), filters: currentSearchFilters())
-            self.rows = results.compactMap(TuneItem.init(row:))
-            self.sortedRows = self.rows
+            // Run the SQL and the (up to 65k-row) TuneItem mapping off the main
+            // actor so a large All-tab fetch can't jank the UI. Drop the result
+            // if a newer refresh superseded us mid-flight.
+            let query = searchQuery
+            let sortCols = sqlSortColumns()
+            let filters = currentSearchFilters()
+            let items = try await Task.detached(priority: .userInitiated) {
+                try db.search(query, sortedBy: sortCols, filters: filters)
+                    .compactMap(TuneItem.init(row:))
+            }.value
+            guard searchGen == gen else { return }
+            self.rows = items
+            self.sortedRows = items
             self.browseDirs = []
 
         case .favorites:
@@ -603,9 +632,9 @@ public final class AppState {
             self.sortedRows = self.rows
             self.browseDirs = []
         }
-        // The visible list changed — restart the shuffle session.
-        shufflePlayed.removeAll()
-        shuffleHistory.removeAll()
+        // Note: the shuffle session is tied to `playQueue` (snapshotted when
+        // the user starts a track), not the visible list, so it deliberately
+        // survives tab/filter changes.
     }
 
     // MARK: Playback
@@ -687,7 +716,7 @@ public final class AppState {
     /// repeat-one set; auto-advance handles the replay itself (see
     /// `checkAutoAdvance`).
     private func jumpToAdjacentTrack(offset: Int) {
-        let list = sortedRows
+        let list = playQueue
         guard let id = currentTuneID, !list.isEmpty else { return }
 
         let target: Int64
@@ -708,37 +737,40 @@ public final class AppState {
                 target = shuffleHistory[cur + 1]
             } else {
                 // Next at the head: pick a fresh random unplayed track.
-                let candidates = list.filter { !shufflePlayed.contains($0.id) }
+                let candidates = list.filter { !shufflePlayed.contains($0) }
                 if candidates.isEmpty {
                     if repeatMode == .off { stop(); return }
                     // Repeat-all: start a fresh pass, avoid replaying current.
                     shufflePlayed = [id]
                     shuffleHistory = [id]
-                    let fresh = list.filter { $0.id != id }
+                    let fresh = list.filter { $0 != id }
                     guard let pick = fresh.randomElement() else { stop(); return }
-                    target = pick.id
+                    target = pick
                 } else {
-                    target = candidates.randomElement()!.id
+                    target = candidates.randomElement()!
                 }
                 shuffleHistory.append(target)
             }
         } else {
-            guard let idx = list.firstIndex(where: { $0.id == id }) else { return }
+            guard let idx = list.firstIndex(of: id) else { return }
             let next = idx + offset
             if repeatMode == .off && (next < 0 || next >= list.count) {
                 stop()
                 return
             }
-            target = list[((next % list.count) + list.count) % list.count].id
+            target = list[((next % list.count) + list.count) % list.count]
         }
 
-        // Normally drives playback via selectedID's didSet. When target already
-        // equals the current selection (a 1-track repeat-all wrap), the didSet
-        // won't fire, so replay explicitly.
+        // Drives playback via selectedID's didSet, but flagged so the didSet
+        // doesn't re-snapshot the queue (we're moving within it). When target
+        // already equals the current selection (a 1-track repeat-all wrap), the
+        // didSet won't fire, so replay explicitly.
         if target == selectedID {
             Task { await play(tuneID: target) }
         } else {
+            navigatingWithinQueue = true
             selectedID = target
+            navigatingWithinQueue = false
         }
     }
 
