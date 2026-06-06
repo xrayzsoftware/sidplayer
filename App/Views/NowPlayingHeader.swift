@@ -3,6 +3,7 @@ import SIDCatalog
 
 struct NowPlayingHeader: View {
     @Environment(AppState.self) private var state
+    @Environment(\.openWindow) private var openWindow
 
     var body: some View {
         let row: TuneRow? = state.currentTuneID.flatMap { id in
@@ -42,6 +43,14 @@ struct NowPlayingHeader: View {
             Spacer()
 
             HStack(spacing: 14) {
+                Button { openWindow(id: "mini-player") } label: {
+                    Image(systemName: "rectangle.inset.filled")
+                        .font(.system(size: 16))
+                        .foregroundStyle(state.theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .help("Open Mini Player")
+
                 Button { state.toggleVisualizers() } label: {
                     Image(systemName: state.showVisualizers ? "waveform" : "waveform.slash")
                         .font(.system(size: 16))

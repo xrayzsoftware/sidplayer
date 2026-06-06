@@ -78,24 +78,10 @@ public final class SIDPlayer: @unchecked Sendable {
         loadBundledROMs()
     }
 
-    /// Looks for `kernal.rom`, `basic.rom`, `chargen.rom` in the main bundle
-    /// (under ROMs/ subdir) and feeds them to every engine. Optional —
-    /// missing ROMs just mean some RSID tunes won't play correctly.
+    /// Loads ROMs from the main bundle and feeds them to all engines.
+    /// Missing ROMs just mean some RSID tunes won't play correctly.
     private func loadBundledROMs() {
-        let bundle = Bundle.main
-        func load(_ name: String) -> Data? {
-            // Try ROMs/<name>.rom first; fall back to <name>.rom at bundle root.
-            if let url = bundle.url(forResource: name, withExtension: "rom", subdirectory: "ROMs") {
-                return try? Data(contentsOf: url)
-            }
-            if let url = bundle.url(forResource: name, withExtension: "rom") {
-                return try? Data(contentsOf: url)
-            }
-            return nil
-        }
-        let kernal  = load("kernal")
-        let basic   = load("basic")
-        let chargen = load("chargen")
+        let (kernal, basic, chargen) = Self.bundleROMData()
         engine.setROMs(kernal: kernal, basic: basic, chargen: chargen)
         for ve in voiceEngines {
             ve.setROMs(kernal: kernal, basic: basic, chargen: chargen)

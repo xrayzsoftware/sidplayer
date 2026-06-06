@@ -4,9 +4,10 @@ import AppKit
 @main
 struct SIDPlayerApp: App {
     @State private var state = AppState()
+    @Environment(\.openWindow) private var openWindow
 
     var body: some Scene {
-        WindowGroup {
+        WindowGroup("SID Player", id: "main") {
             ContentView()
                 .environment(state)
                 .frame(minWidth: 540, minHeight: 600)
@@ -25,10 +26,25 @@ struct SIDPlayerApp: App {
         // edge-to-edge, so theme color reaches the very top.
         .windowStyle(.hiddenTitleBar)
         .windowResizability(.contentMinSize)
+
+        Window("Mini Player", id: "mini-player") {
+            MiniPlayerView()
+                .environment(state)
+        }
+        .defaultSize(width: 360, height: 132)
+        .windowResizability(.contentSize)
+        .commands {
+            CommandGroup(after: .windowArrangement) {
+                Button("Mini Player") {
+                    openWindow(id: "mini-player")
+                }
+                .keyboardShortcut("m", modifiers: [.command, .shift])
+            }
+        }
     }
 }
 
-private struct WindowTinter: NSViewRepresentable {
+struct WindowTinter: NSViewRepresentable {
     let color: Color
     let isDark: Bool
 
@@ -49,7 +65,7 @@ private struct WindowTinter: NSViewRepresentable {
 /// NSView that knows when it joins a window so we can tint reliably —
 /// dispatching async on view init often runs before the view is attached
 /// to a window, leaving the title bar at the system default.
-private final class WindowAwareView: NSView {
+final class WindowAwareView: NSView {
     var tint: NSColor = .windowBackgroundColor
     var isDark: Bool = true
 

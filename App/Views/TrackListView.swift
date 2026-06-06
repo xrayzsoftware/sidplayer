@@ -1,4 +1,6 @@
 import SwiftUI
+import AppKit
+import UniformTypeIdentifiers
 import SIDCatalog
 
 struct TrackListView: View {
@@ -114,6 +116,22 @@ struct TrackListView: View {
                 }
             }
         }
+
+        Divider()
+
+        Button("Export as WAV…") {
+            guard let db = state.catalog,
+                  state.hvscSource != nil,
+                  let row = try? db.tune(id: tuneID) else { return }
+            let title  = (row.title  ?? "Unknown").replacingOccurrences(of: "/", with: "-")
+            let author = (row.author ?? "Unknown").replacingOccurrences(of: "/", with: "-")
+            let panel  = NSSavePanel()
+            panel.allowedContentTypes = [.wav]
+            panel.nameFieldStringValue = "\(title) - \(author).wav"
+            guard panel.runModal() == .OK, let dest = panel.url else { return }
+            Task { await state.exportTuneAsWAV(tuneID: tuneID, to: dest) }
+        }
+        .disabled(state.hvscSource == nil)
     }
 
     private func lengthMs(for item: TuneItem) -> Int {

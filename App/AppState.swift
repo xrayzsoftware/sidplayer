@@ -828,4 +828,45 @@ public final class AppState {
         }.value
         if let loaded { self.stil = loaded }
     }
+
+    // MARK: Export
+
+    /// Renders the given tune (using its default/start subtune) to a WAV file
+    /// at `destination`. The save panel is handled by the caller (TrackListView)
+    /// so this method takes a pre-chosen URL and just does the work.
+    public func exportTuneAsWAV(tuneID: Int64, to destination: URL) async {
+        guard let db = catalog, let source = hvscSource else {
+            lastError = "HVSC not configured."
+            return
+        }
+        guard let row = try? db.tune(id: tuneID) else {
+            lastError = "Tune not found in catalog."
+            return
+        }
+
+        // If this tune is currently playing use the live subtune; otherwise
+        // fall back to the tune's declared start song.
+        let subtune = (tuneID == currentTuneID) ? currentSubtune : max(1, row.startSong)
+
+        // Prefer the per-subtune length from Songlengths; fall back to the
+        // tune-wide default, then the app-wide default (3 min).
+        let lengths = (try? db.lengths(tuneId: tuneID)) ?? []
+        let subIdx  = max(0, subtune - 1)
+        let durMs   = subIdx < lengths.count
+            ? lengths[subIdx].durationMs
+            : (row.defaultLengthMs ?? defaultLengthMs)
+
+        let absPath = source.root.appendingPathComponent(row.path).path
+        let config  = emulationConfig
+        let sr      = Int(player.sampleRate)
+
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try exportSIDToWAV(path: absPath, song: subtune, durationMs: durMs,
+                                   sampleRate: sr, config: config, to: destination)
+            }.value
+        } catch {
+            lastError = "Export failed: \(error.localizedDescription)"
+        }
+    }
 }
