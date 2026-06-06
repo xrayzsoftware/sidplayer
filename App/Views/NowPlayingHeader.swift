@@ -43,7 +43,13 @@ struct NowPlayingHeader: View {
             Spacer()
 
             HStack(spacing: 14) {
-                Button { openWindow(id: "mini-player") } label: {
+                Button {
+                    openWindow(id: "mini-player")
+                    // Delay so the mini player window appears and gets tagged first.
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
+                        MiniPlayerView.hideMainWindow()
+                    }
+                } label: {
                     Image(systemName: "rectangle.inset.filled")
                         .font(.system(size: 16))
                         .foregroundStyle(state.theme.textSecondary)

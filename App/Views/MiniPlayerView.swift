@@ -5,6 +5,7 @@ import SIDCatalog
 struct MiniPlayerView: View {
     @Environment(AppState.self) private var state
     @Environment(\.openWindow) private var openWindow
+    @Environment(\.dismissWindow) private var dismissWindow
 
     var body: some View {
         @Bindable var state = state
@@ -48,8 +49,7 @@ struct MiniPlayerView: View {
                 }
 
                 Button {
-                    openWindow(id: "main")
-                    NSApp.activate(ignoringOtherApps: true)
+                    dismissWindow(id: "mini-player")
                 } label: {
                     Image(systemName: "arrow.up.left.and.arrow.down.right")
                         .foregroundStyle(theme.textSecondary)
@@ -97,16 +97,35 @@ struct MiniPlayerView: View {
                     .controlSize(.mini)
             }
 
-            if state.showVisualizers {
-                PeakMeterView(tap: state.player.vizTap)
-                    .frame(height: 28)
-                    .allowsHitTesting(false)
-            }
         }
         .padding(10)
         .frame(width: 360)
         .background(theme.windowBackground)
         .background(WindowTinter(color: theme.windowBackground, isDark: theme.isDark))
+        .background(MiniPlayerWindowSetup())
+        .onAppear {
+            // Give the window a chance to become key, then hide the main window.
+            DispatchQueue.main.async {
+                MiniPlayerView.hideMainWindow()
+            }
+        }
+        .onDisappear { MiniPlayerView.showMainWindow() }
+    }
+
+    static func hideMainWindow() {
+        for win in NSApp.windows {
+            guard win.isVisible,
+                  !(win is NSPanel),
+                  win.identifier?.rawValue != "mini-player" else { continue }
+            win.orderOut(nil)
+        }
+    }
+
+    static func showMainWindow() {
+        for win in NSApp.windows where win.identifier?.rawValue != "mini-player" && !(win is NSPanel) {
+            win.makeKeyAndOrderFront(nil)
+        }
+        NSApp.activate(ignoringOtherApps: true)
     }
 
     private var currentRow: TuneRow? {
@@ -131,6 +150,21 @@ struct MiniPlayerView: View {
         let cur = Int(state.currentTime)
         let total = currentLengthMs / 1000
         return String(format: "%d:%02d / %d:%02d", cur / 60, cur % 60, total / 60, total % 60)
+    }
+}
+
+/// Tags the mini-player window with its identifier as soon as the view
+/// is attached to a window. Using viewDidMoveToWindow is more reliable
+/// than reading NSApp.keyWindow in onAppear, which races with focus changes.
+private struct MiniPlayerWindowSetup: NSViewRepresentable {
+    func makeNSView(context: Context) -> _TagView { _TagView() }
+    func updateNSView(_ view: _TagView, context: Context) {}
+
+    final class _TagView: NSView {
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            window?.identifier = NSUserInterfaceItemIdentifier("mini-player")
+        }
     }
 }
 

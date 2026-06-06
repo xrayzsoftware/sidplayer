@@ -31,7 +31,7 @@ struct SIDPlayerApp: App {
             MiniPlayerView()
                 .environment(state)
         }
-        .defaultSize(width: 360, height: 132)
+        .defaultSize(width: 360, height: 168)
         .windowResizability(.contentSize)
         .commands {
             CommandGroup(after: .windowArrangement) {
