@@ -24,6 +24,16 @@ private final class PeakMeterState {
         )
     }
 
+    /// Decays all bands toward zero. Used while playback is paused/stopped —
+    /// the tap still holds the last pre-pause samples, and re-running the FFT
+    /// over them would freeze the bars at a stale spectrum instead.
+    func decayToSilence() {
+        for c in 0..<kBands {
+            bandLevels[c] = max(0, bandLevels[c] - 0.040)
+            peakLevels[c] = max(0, peakLevels[c] - 0.012)
+        }
+    }
+
     /// Updates `bandLevels` (smoothed) and `peakLevels` (decaying caps).
     func tick(tap: VizTap) {
         guard let fft else { return }
@@ -75,7 +85,11 @@ struct PeakMeterView: View {
         TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
         Canvas { ctx, size in
             _ = timeline.date
-            meter.tick(tap: tap)
+            if state.isPlaying {
+                meter.tick(tap: tap)
+            } else {
+                meter.decayToSilence()
+            }
 
             ctx.fill(Path(CGRect(origin: .zero, size: size)),
                      with: .color(theme.visualizerBackground))
