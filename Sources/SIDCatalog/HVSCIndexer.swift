@@ -37,6 +37,11 @@ public actor HVSCIndexer {
         // and playlist / play-history references survive the re-index.
         var seenPaths = Set<String>()
         seenPaths.reserveCapacity(total)
+        // Files that exist on disk but failed to parse/hash this pass. They
+        // must be excluded from the post-index deletion: a transient read
+        // failure must not delete a previously indexed tune (cascading it
+        // out of playlists and play history).
+        var failedPaths = Set<String>()
 
         // Accumulate upserts and commit them in batches — one transaction per
         // tune dominated re-index time at ~55k files.
@@ -56,20 +61,24 @@ public actor HVSCIndexer {
 
         for url in paths {
             processed += 1
+            let resolved = url.standardizedFileURL.resolvingSymlinksInPath().path
+            let relPath: String
+            if resolved.hasPrefix(rootPath + "/") {
+                relPath = String(resolved.dropFirst(rootPath.count + 1))
+            } else {
+                relPath = resolved  // fall back to absolute; shouldn't normally happen
+            }
             do {
                 // Parse only the leading header bytes; the full file is read
                 // once more below by the MD5 pass, which genuinely needs it.
-                guard let headerData = Self.readHeader(url) else { continue }
-                let header = try PSIDHeader(data: headerData)
-                guard let md5 = SIDPlayerEngine.md5(forFileAt: url.path) else {
+                guard let headerData = Self.readHeader(url) else {
+                    failedPaths.insert(relPath)
                     continue
                 }
-                let resolved = url.standardizedFileURL.resolvingSymlinksInPath().path
-                let relPath: String
-                if resolved.hasPrefix(rootPath + "/") {
-                    relPath = String(resolved.dropFirst(rootPath.count + 1))
-                } else {
-                    relPath = resolved  // fall back to absolute; shouldn't normally happen
+                let header = try PSIDHeader(data: headerData)
+                guard let md5 = SIDPlayerEngine.md5(forFileAt: url.path) else {
+                    failedPaths.insert(relPath)
+                    continue
                 }
                 let lengths = songlengths.lengthsByMD5[md5] ?? []
 
@@ -92,6 +101,7 @@ public actor HVSCIndexer {
                 seenPaths.insert(relPath)
             } catch {
                 // Skip unreadable / malformed tunes but keep going.
+                failedPaths.insert(relPath)
             }
 
             // Commit a full batch. Kept outside the per-tune `do` so a DB write
@@ -111,8 +121,9 @@ public actor HVSCIndexer {
         try flush()
 
         // Drop rows for files that no longer exist, then heal any playlist
-        // position gaps their removal may have cascaded.
-        try db.deleteTunesExcept(paths: seenPaths)
+        // position gaps their removal may have cascaded. Files that merely
+        // failed this pass are kept — only confirmed-absent paths get dropped.
+        try db.deleteTunesExcept(paths: seenPaths.union(failedPaths))
         try db.normalizePlaylistPositions()
 
         progress?(.init(processed: processed, inserted: inserted, total: total, currentPath: nil))

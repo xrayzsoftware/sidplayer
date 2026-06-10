@@ -240,12 +240,15 @@ public final class SIDPlayer: @unchecked Sendable {
             let bufList = UnsafeMutableAudioBufferListPointer(abl)
             guard let dest = bufList[0].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
 
+            // Non-blocking ring/tap access: a real-time render callback must
+            // never wait on the producer's lock. Contention shows up as one
+            // silent cycle / dropped viz chunk, which is inaudible and rare.
             let n = min(Int(frameCount), scratchCap)
-            let read = ringRef.read(scratch, count: n)
+            let read = ringRef.tryRead(scratch, count: n)
             for i in 0..<read { dest[i] = Float(scratch[i]) / 32768.0 }
             let total = Int(frameCount)
             if read < total { dest.advanced(by: read).update(repeating: 0, count: total - read) }
-            if read > 0 { tapRef.append(scratch, count: read) }
+            if read > 0 { tapRef.tryAppend(scratch, count: read) }
             return noErr
         }
         av.attach(node)

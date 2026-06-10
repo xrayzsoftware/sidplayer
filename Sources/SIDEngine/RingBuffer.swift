@@ -3,7 +3,8 @@ import os
 
 /// Single-producer single-consumer Int16 ring buffer.
 /// Uses an unfair lock — fine for our buffer sizes (a few thousand samples,
-/// memcpy under lock takes microseconds).
+/// memcpy under lock takes microseconds). The consumer side offers `tryRead`
+/// so a real-time audio thread never blocks on the producer.
 public final class RingBuffer: @unchecked Sendable {
     private let capacity: Int
     private var storage: UnsafeMutablePointer<Int16>
@@ -50,6 +51,20 @@ public final class RingBuffer: @unchecked Sendable {
     @discardableResult
     public func read(_ dst: UnsafeMutablePointer<Int16>, count n: Int) -> Int {
         lock.lock(); defer { lock.unlock() }
+        return readLocked(dst, count: n)
+    }
+
+    /// Non-blocking read for the real-time audio thread. If the producer
+    /// holds the lock right now, returns 0 immediately (caller outputs
+    /// silence for the cycle) instead of blocking a Core Audio callback.
+    @discardableResult
+    public func tryRead(_ dst: UnsafeMutablePointer<Int16>, count n: Int) -> Int {
+        guard lock.lockIfAvailable() else { return 0 }
+        defer { lock.unlock() }
+        return readLocked(dst, count: n)
+    }
+
+    private func readLocked(_ dst: UnsafeMutablePointer<Int16>, count n: Int) -> Int {
         let readable = min(n, count)
         for i in 0..<readable {
             dst[i] = storage[(readIdx + i) % capacity]

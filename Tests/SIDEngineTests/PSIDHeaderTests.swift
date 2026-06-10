@@ -71,6 +71,26 @@ final class PSIDHeaderTests: XCTestCase {
         XCTAssertEqual(h.format, .rsid)
     }
 
+    /// Byte 0x7A is reserved in PSID v2 (older editors left junk in it) and
+    /// only gained the second-SID-address meaning in v3. A v2 file with a
+    /// non-zero value there must not report a second SID chip.
+    func testV2ReservedByteDoesNotFakeSecondSID() throws {
+        var d = makeCommandoHeader()
+        d[0x7A] = 0x42
+        let h = try PSIDHeader(data: d)
+        XCTAssertNil(h.secondSIDAddress)
+        XCTAssertEqual(h.sidChips, 1)
+    }
+
+    func testV3SecondSIDAddressParsed() throws {
+        var d = makeCommandoHeader()
+        d.beWriteUInt16(at: 0x04, 3)         // version 3
+        d[0x7A] = 0x42
+        let h = try PSIDHeader(data: d)
+        XCTAssertEqual(h.secondSIDAddress, 0xD420)
+        XCTAssertEqual(h.sidChips, 2)
+    }
+
     func testReadsRealCommandoFixtureIfPresent() throws {
         let fixture = URL(fileURLWithPath: "Tests/Fixtures/Commando.sid")
         guard FileManager.default.fileExists(atPath: fixture.path) else {

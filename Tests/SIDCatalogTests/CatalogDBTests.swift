@@ -85,6 +85,19 @@ final class CatalogDBTests: XCTestCase {
         XCTAssertEqual(com.count, 2)
     }
 
+    /// Bare uppercase NOT/AND/OR are FTS5 query operators — a user typing one
+    /// as a search term must get (empty) results, not a thrown syntax error.
+    func testSearchWithFTS5OperatorWordsDoesNotThrow() throws {
+        let db = try CatalogDB()
+        _ = try db.insert(tune: makeRow(path: "a.sid", title: "Not Even Close", author: "Rob"), lengths: [])
+
+        for q in ["NOT", "AND", "OR", "NOT even"] {
+            XCTAssertNoThrow(try db.search(q), "query \"\(q)\" must not be parsed as an FTS5 operator")
+        }
+        // Case-folded matching still works.
+        XCTAssertEqual(try db.search("NOT").first?.title, "Not Even Close")
+    }
+
     func testEmptyQueryReturnsAllRowsLimited() throws {
         let db = try CatalogDB()
         for i in 0..<5 {

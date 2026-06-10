@@ -553,7 +553,11 @@ public final class CatalogDB: Sendable {
             }
             let tokens = q.split(whereSeparator: { !$0.isLetter && !$0.isNumber })
             guard !tokens.isEmpty else { return [] }
-            let pattern = tokens.map { "\($0)*" }.joined(separator: " ")
+            // Lowercase so bare NOT/AND/OR aren't parsed as FTS5 operators
+            // (searching "NOT" would be a syntax error). FTS5 keywords are
+            // only recognized in uppercase, and the unicode61 tokenizer
+            // case-folds anyway, so matching is unchanged.
+            let pattern = tokens.map { "\($0.lowercased())*" }.joined(separator: " ")
 
             var allArgs: [any DatabaseValueConvertible] = [pattern]
             allArgs.append(contentsOf: filterArgs)

@@ -34,10 +34,14 @@ public func exportSIDToWAV(
 
     // Create/truncate the file and write a 44-byte placeholder header.
     // We seek back and patch it once we know the exact rendered byte count.
-    FileManager.default.createFile(atPath: destination.path, contents: nil)
+    // The createFile check matters: if it fails over an existing file, the
+    // handle would silently append into stale PCM from a previous export.
+    guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
+        throw ExportError.cannotCreateFile(destination.path)
+    }
     let fh = try FileHandle(forWritingTo: destination)
     defer { try? fh.close() }
-    fh.write(Data(count: 44))
+    try fh.write(contentsOf: Data(count: 44))
 
     let chunkSize = 4096
     let scratch = UnsafeMutablePointer<Int16>.allocate(capacity: chunkSize)
@@ -49,7 +53,7 @@ public func exportSIDToWAV(
         let got  = exportEngine.render(into: scratch, count: want)
         if got <= 0 { break }
         // Int16 LE PCM — arm64/x86 are both little-endian; no byte swap needed.
-        fh.write(Data(bytes: scratch, count: got * 2))
+        try fh.write(contentsOf: Data(bytes: scratch, count: got * 2))
         rendered += got
     }
 
@@ -57,9 +61,9 @@ public func exportSIDToWAV(
     let dataBytes = UInt32(rendered * 2)
     let fileBytes = dataBytes + 36  // total file size minus the 8-byte RIFF descriptor
     try fh.seek(toOffset: 0)
-    fh.write(sidWAVHeader(sampleRate: UInt32(sampleRate),
-                          dataBytes: dataBytes,
-                          fileBytes: fileBytes))
+    try fh.write(contentsOf: sidWAVHeader(sampleRate: UInt32(sampleRate),
+                                          dataBytes: dataBytes,
+                                          fileBytes: fileBytes))
 }
 
 // MARK: - SIDPlayer ROM helper
@@ -115,11 +119,13 @@ private func sidLE32(_ v: UInt32) -> Data { withUnsafeBytes(of: v.littleEndian) 
 public enum ExportError: LocalizedError, Sendable {
     case noTuneLoaded
     case zeroDuration
+    case cannotCreateFile(String)
 
     public var errorDescription: String? {
         switch self {
         case .noTuneLoaded: return "No tune is loaded — play a tune before exporting."
         case .zeroDuration:  return "Song length is zero; cannot export."
+        case .cannotCreateFile(let path): return "Couldn't create the output file at \(path)."
         }
     }
 }

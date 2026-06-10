@@ -103,7 +103,11 @@ public struct PSIDHeader: Sendable, Equatable {
             flags = data.beUInt16(at: 0x76)
             startPage = data[0x78]
             pageLen = data[0x79]
-            // 2nd SID base address (LSB) — present in v2 (zero) and used in v3+
+        }
+        if version >= 3 && data.count >= 0x7C {
+            // 2nd SID base address (LSB) at 0x7A — only assigned meaning in
+            // v3. In v2 the byte is reserved and older editors left junk in
+            // it, which would fake a second SID chip.
             let lsb2 = data[0x7A]
             sid2 = lsb2 == 0 ? nil : 0xD000 | (UInt16(lsb2) << 4)
         }

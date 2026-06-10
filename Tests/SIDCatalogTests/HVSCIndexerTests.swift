@@ -133,6 +133,31 @@ final class HVSCIndexerTests: XCTestCase {
                       "playlist positions must be re-densified after a cascade")
     }
 
+    /// A file that still exists but fails to parse on a later pass (corrupt,
+    /// transient read error) must NOT be deleted from the catalog — only
+    /// confirmed-absent files are dropped. Regression for re-index silently
+    /// cascading such tunes out of playlists and play history.
+    func testReindexKeepsTuneWhenFileFailsToParse() async throws {
+        let path = "MUSICIANS/H/Hubbard_Rob/Commando.sid"
+        let root = try makeSyntheticRoot(relPaths: [path])
+        defer { try? FileManager.default.removeItem(at: root) }
+
+        let source = HVSCSource(root: root)
+        let db = try CatalogDB()
+        let indexer = HVSCIndexer()
+
+        _ = try await indexer.reindex(source: source, into: db)
+        let id = try XCTUnwrap(try db.tune(path: path)?.id)
+
+        // Corrupt the file in place so the header parse fails (bad magic).
+        try Data("garbage, not a SID".utf8)
+            .write(to: root.appendingPathComponent(path))
+        _ = try await indexer.reindex(source: source, into: db)
+
+        XCTAssertEqual(try db.tune(path: path)?.id, id,
+                       "a parse failure must not delete a previously indexed tune")
+    }
+
     /// Builds a synthetic HVSC root with the Commando fixture copied to each of
     /// `relPaths`, plus a matching DOCUMENTS/Songlengths.md5. Skips when the
     /// gitignored fixture isn't present.

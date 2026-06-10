@@ -65,6 +65,9 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
         let tmp = fm.temporaryDirectory
             .appendingPathComponent("hvsc-\(version).7z", isDirectory: false)
         if fm.fileExists(atPath: tmp.path) { try? fm.removeItem(at: tmp) }
+        // Remove the ~250 MB archive however we exit — an extraction failure
+        // used to leak it in the temp directory.
+        defer { try? fm.removeItem(at: tmp) }
 
         try await downloadFile(
             from: archiveURL,
@@ -95,7 +98,6 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
         } catch {
             throw HVSCError.extractionFailed("7z: \(error.localizedDescription)")
         }
-        try? fm.removeItem(at: tmp)
 
         // 3. Locate the C64Music root inside the extracted tree (HVSC archives
         // wrap content in a single top-level dir, name varies by release).

@@ -25,9 +25,22 @@ public final class VizTap: @unchecked Sendable {
         buffer.deallocate()
     }
 
-    /// Append `n` samples. Audio-thread side.
+    /// Append `n` samples. Producer-thread side (may block briefly).
     public func append(_ src: UnsafePointer<Int16>, count n: Int) {
         lock.lock(); defer { lock.unlock() }
+        appendLocked(src, count: n)
+    }
+
+    /// Non-blocking append for the real-time audio thread. Skips the write
+    /// if a reader holds the lock — dropping one viz chunk beats blocking a
+    /// Core Audio callback.
+    public func tryAppend(_ src: UnsafePointer<Int16>, count n: Int) {
+        guard lock.lockIfAvailable() else { return }
+        defer { lock.unlock() }
+        appendLocked(src, count: n)
+    }
+
+    private func appendLocked(_ src: UnsafePointer<Int16>, count n: Int) {
         for i in 0..<n {
             buffer[writeIdx] = src[i]
             writeIdx = (writeIdx + 1) % capacity
