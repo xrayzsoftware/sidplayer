@@ -96,7 +96,10 @@ struct SpectrogramView: View {
 
     var body: some View {
         let theme = state.theme
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+        // Pause the schedule when playback is stopped: with no new samples the
+        // waterfall would otherwise keep scrolling stale columns and run a
+        // 512-point FFT every frame for nothing.
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !state.isPlaying)) { timeline in
         Canvas { ctx, size in
             _ = timeline.date
             spec.tick(tap: tap)

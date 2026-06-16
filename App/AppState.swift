@@ -555,8 +555,13 @@ public final class AppState {
         let candidate = HVSCSource(root: url)
         do {
             try candidate.validate()
+            // Balance the scope held by the previously-resolved bookmark before
+            // dropping its last reference. Harmless no-op for a URL that never
+            // began security-scoped access (e.g. one straight from the panel).
+            let oldRoot = hvscSource?.root
             HVSCBookmark.save(url)
             hvscSource = candidate
+            if let oldRoot, oldRoot != url { HVSCBookmark.release(oldRoot) }
             try await reindex()
         } catch {
             bootstrap = .error(error.localizedDescription)
@@ -849,12 +854,15 @@ public final class AppState {
         let subtune = (tuneID == currentTuneID) ? currentSubtune : max(1, row.startSong)
 
         // Prefer the per-subtune length from Songlengths; fall back to the
-        // tune-wide default, then the app-wide default (3 min).
+        // tune's own declared default. Do NOT fall back to the instance
+        // `defaultLengthMs` — that holds the *currently-loaded* tune's length,
+        // which is unrelated to the tune being exported. 0 here makes the
+        // exporter surface `zeroDuration` rather than render a wrong length.
         let lengths = (try? db.lengths(tuneId: tuneID)) ?? []
         let subIdx  = max(0, subtune - 1)
         let durMs   = subIdx < lengths.count
             ? lengths[subIdx].durationMs
-            : (row.defaultLengthMs ?? defaultLengthMs)
+            : (row.defaultLengthMs ?? 0)
 
         let absPath = source.root.appendingPathComponent(row.path).path
         let config  = emulationConfig

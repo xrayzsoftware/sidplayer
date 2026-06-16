@@ -20,7 +20,8 @@ struct WaveformView: View {
                     color: colors[i],
                     label: "V\(i + 1)",
                     background: theme.visualizerBackground,
-                    centerLineColor: theme.textSecondary.opacity(0.20)
+                    centerLineColor: theme.textSecondary.opacity(0.20),
+                    isPlaying: state.isPlaying
                 )
                 if i < 2 {
                     Rectangle()
@@ -40,9 +41,12 @@ private struct VoicePanel: View {
     let label: String
     let background: Color
     let centerLineColor: Color
+    let isPlaying: Bool
 
     var body: some View {
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+        // Freeze when stopped — the voice taps receive no new samples while
+        // paused, so re-snapshotting and redrawing each frame is wasted work.
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !isPlaying)) { timeline in
         Canvas { ctx, size in
             _ = timeline.date
             let snap = tap.snapshotFloats(count: 1024)

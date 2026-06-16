@@ -311,7 +311,11 @@ public final class SIDPlayer: @unchecked Sendable {
             if _vizEnabled.get {
                 for (i, ve) in voiceEngines.enumerated() {
                     let m = ve.render(into: voiceScratch[i], count: n)
-                    if m > 0 { voiceTaps[i].append(voiceScratch[i], count: m) }
+                    // Non-blocking: these writes precede the audio ring fill
+                    // below, so blocking on a UI reader's snapshot lock could
+                    // stall the ring and underrun the output. A dropped viz
+                    // chunk is invisible; a stalled ring is audible.
+                    if m > 0 { voiceTaps[i].tryAppend(voiceScratch[i], count: m) }
                 }
             }
 

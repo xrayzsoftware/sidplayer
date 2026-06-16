@@ -10,13 +10,18 @@ struct STILScrollerView: View {
     @State private var textWidth: CGFloat = 0
     @State private var startDate = Date()
     @State private var lastLine: String = ""
+    // The scroller text is cached and recomputed only when the tune or STIL
+    // availability changes. Computing it touches SQLite, and `body` re-runs at
+    // the ticker's 10 Hz (currentTime updates) — recomputing it there would
+    // fire DB reads dozens of times a second for a string that rarely changes.
+    @State private var cachedLine = "★ SID PLAYER ★   select a tune to begin   "
 
     private let speed: CGFloat = 80   // points / second
 
     var body: some View {
         let theme = state.theme
         GeometryReader { geo in
-            let line = scrollText
+            let line = cachedLine
             let cycle = max(1, textWidth + geo.size.width)
 
             TimelineView(.animation) { context in
@@ -47,7 +52,10 @@ struct STILScrollerView: View {
             .frame(height: 28)
             .onAppear {
                 Task { await state.ensureSTILLoaded() }
+                cachedLine = scrollText
             }
+            .onChange(of: state.currentTuneID) { _, _ in cachedLine = scrollText }
+            .onChange(of: state.stil == nil)   { _, _ in cachedLine = scrollText }
             .onChange(of: line) { _, new in
                 if new != lastLine {
                     lastLine = new

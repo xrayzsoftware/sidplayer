@@ -42,7 +42,9 @@ struct VectorscopeView: View {
 
     var body: some View {
         let theme = state.theme
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+        // Freeze the trace when playback is stopped — no new samples arrive,
+        // so redrawing (and re-snapshotting) every frame just burns CPU.
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !state.isPlaying)) { timeline in
         Canvas { ctx, size in
             _ = timeline.date
             ring.push(tap.snapshotFloats(count: kVecSampleCount))
