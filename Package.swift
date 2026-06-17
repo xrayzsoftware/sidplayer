@@ -34,10 +34,15 @@ let package = Package(
                 .headerSearchPath("Vendor/include"),
             ],
             linkerSettings: [
-                // Pass the static archive directly to the linker. Path is
+                // Pass the static archives directly to the linker. Paths are
                 // relative to the package root. Force-load isn't required —
                 // libsidplayfp symbols are referenced from CSIDEngine.mm.
-                .unsafeFlags(["Sources/CSIDEngine/Vendor/lib/libsidplayfp.a"]),
+                // libsidplayfp's ReSIDfp builder references the reSIDfp DSP in
+                // libresidfp, so it must follow libsidplayfp on the link line.
+                .unsafeFlags([
+                    "Sources/CSIDEngine/Vendor/lib/libsidplayfp.a",
+                    "Sources/CSIDEngine/Vendor/lib/libresidfp.a",
+                ]),
             ]
         ),
         .target(

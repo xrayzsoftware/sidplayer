@@ -101,6 +101,10 @@ struct SettingsSheet: View {
 
     private struct EmulationSection: View {
         @Environment(AppState.self) private var state
+        // Local copies so the filter sliders drag smoothly; committed (which
+        // reloads the current tune) only on release via onEditingChanged.
+        @State private var curve6581: Double = 0.5
+        @State private var curve8580: Double = 0.5
 
         var body: some View {
             let theme = state.theme
@@ -108,6 +112,20 @@ struct SettingsSheet: View {
                 Text("Emulation")
                     .font(.headline)
                     .foregroundStyle(theme.textPrimary)
+
+                HStack {
+                    Text("Engine")
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Picker("", selection: engineBinding) {
+                        ForEach(EmulationConfig.EngineChoice.allCases, id: \.self) { c in
+                            Text(c.label).tag(c)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 160)
+                }
 
                 HStack {
                     Text("SID Model")
@@ -158,9 +176,54 @@ struct SettingsSheet: View {
                 .toggleStyle(.switch)
                 .tint(theme.textAccent)
 
+                if state.emulationConfig.engine == .residfp {
+                    filterCurveRow("6581 Filter", value: $curve6581) {
+                        var c = state.emulationConfig
+                        c.filter6581Curve = curve6581
+                        state.updateEmulationConfig(c)
+                    }
+                    filterCurveRow("8580 Filter", value: $curve8580) {
+                        var c = state.emulationConfig
+                        c.filter8580Curve = curve8580
+                        state.updateEmulationConfig(c)
+                    }
+                    Text("Filter curve: 0 = dark, 1 = bright (reSIDfp only).")
+                        .font(.caption)
+                        .foregroundStyle(theme.textSecondary)
+                }
+
                 Text("Auto respects each tune's declared chip and clock. Changes reload the current tune.")
                     .font(.caption)
                     .foregroundStyle(theme.textSecondary)
+            }
+            .onAppear {
+                curve6581 = state.emulationConfig.filter6581Curve
+                curve8580 = state.emulationConfig.filter8580Curve
+            }
+        }
+
+        private var engineBinding: Binding<EmulationConfig.EngineChoice> {
+            Binding(
+                get: { state.emulationConfig.engine },
+                set: { var c = state.emulationConfig; c.engine = $0; state.updateEmulationConfig(c) }
+            )
+        }
+
+        @ViewBuilder
+        private func filterCurveRow(_ label: String,
+                                    value: Binding<Double>,
+                                    commit: @escaping () -> Void) -> some View {
+            let theme = state.theme
+            HStack {
+                Text(label)
+                    .foregroundStyle(theme.textPrimary)
+                    .frame(width: 80, alignment: .leading)
+                Slider(value: value, in: 0...1) { editing in if !editing { commit() } }
+                    .tint(theme.textAccent)
+                Text(String(format: "%.2f", value.wrappedValue))
+                    .font(.system(.caption, design: .monospaced))
+                    .foregroundStyle(theme.textSecondary)
+                    .frame(width: 34, alignment: .trailing)
             }
         }
 

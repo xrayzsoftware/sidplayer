@@ -6,6 +6,7 @@
 #include <sidplayfp/SidConfig.h>
 #include <sidplayfp/SidInfo.h>
 #include <sidplayfp/builders/sidlite.h>
+#include <sidplayfp/builders/residfp.h>
 
 #include <cstring>
 #include <vector>
@@ -16,7 +17,7 @@
 @implementation CSIDEngine {
     sidplayfp      *_engine;
     SidTune        *_tune;
-    SIDLiteBuilder *_builder;
+    sidbuilder     *_builder;
     std::vector<short> _scratch;     // leftover samples from last play() call
     size_t          _scratchHead;    // next sample to consume from _scratch
     NSInteger       _sampleRate;     // last sample rate passed to startSong
@@ -30,6 +31,9 @@
 @synthesize forceC64Model = _forceC64Model;
 @synthesize digiBoost = _digiBoost;
 @synthesize samplingMethod = _samplingMethod;
+@synthesize useReSIDfp = _useReSIDfp;
+@synthesize filter6581Curve = _filter6581Curve;
+@synthesize filter8580Curve = _filter8580Curve;
 
 + (NSString *)md5ForFileAtPath:(NSString *)path {
     SidTune tune([path UTF8String], nullptr, true);
@@ -59,6 +63,9 @@ static NSError *makeError(NSString *msg) {
         _forceC64Model = NO;
         _digiBoost = NO;
         _samplingMethod = CSIDSamplingInterpolate;
+        _useReSIDfp = NO;
+        _filter6581Curve = 0.5;
+        _filter8580Curve = 0.5;
     }
     return self;
 }
@@ -127,7 +134,16 @@ static NSError *makeError(NSString *msg) {
 
     _tune->selectSong((unsigned)songNum);
 
-    if (!_builder) {
+    // (Re)create the SID emulation builder for the selected engine. The
+    // previous builder stays alive until engine->config() below has released
+    // its SIDs; freeing it earlier would dangle the engine's locked emus.
+    sidbuilder *oldBuilder = _builder;
+    if (_useReSIDfp) {
+        ReSIDfpBuilder *rb = new ReSIDfpBuilder("residfp");
+        rb->filter6581Curve(_filter6581Curve);
+        rb->filter8580Curve(_filter8580Curve);
+        _builder = rb;
+    } else {
         _builder = new SIDLiteBuilder("sidlite");
     }
 
@@ -159,8 +175,11 @@ static NSError *makeError(NSString *msg) {
 
     if (!_engine->config(cfg)) {
         if (error) *error = makeError(@(_engine->error() ?: "engine config failed"));
-        return NO;
+        return NO;   // leak oldBuilder on the rare config failure: the engine's
+                     // SID references are unchanged, so freeing it could dangle.
     }
+    // config() succeeded — old SIDs released, new ones locked. Free the old.
+    delete oldBuilder;
     if (!_engine->load(_tune)) {
         if (error) *error = makeError(@(_engine->error() ?: "engine load failed"));
         return NO;

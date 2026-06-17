@@ -68,6 +68,16 @@ typedef NS_ENUM(NSInteger, CSIDSampling) {
 @property (nonatomic, assign) BOOL digiBoost;
 @property (nonatomic, assign) CSIDSampling samplingMethod;
 
+/// Use the full-quality reSIDfp analog model instead of the lightweight
+/// SIDLite core. Applied on the next startSong:. Only reSIDfp's filter responds
+/// to the curve settings below.
+@property (nonatomic, assign) BOOL useReSIDfp;
+
+/// reSIDfp 6581 / 8580 filter curve: 0.0 (dark) … 1.0 (bright), default 0.5.
+/// Ignored by SIDLite. Applied on the next startSong:.
+@property (nonatomic, assign) double filter6581Curve;
+@property (nonatomic, assign) double filter8580Curve;
+
 /// Renders up to `frameCount` mono int16 frames into `buffer`.
 /// Returns frames actually written (0 indicates engine stop / error).
 - (NSInteger)renderFrames:(int16_t *)buffer count:(NSInteger)frameCount;

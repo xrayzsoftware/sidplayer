@@ -241,6 +241,9 @@ public final class AppState {
     private static let clockKey       = "clock.v1"
     private static let digiBoostKey   = "digiBoost.v1"
     private static let samplingKey    = "sampling.v1"
+    private static let engineKey      = "engine.v1"
+    private static let filter6581Key  = "filter6581Curve.v1"
+    private static let filter8580Key  = "filter8580Curve.v1"
 
     public init() {
         player.setVolume(Float(volume))
@@ -304,6 +307,16 @@ public final class AppState {
            let val = EmulationConfig.SamplingMethod(rawValue: raw) {
             emulationConfig.sampling = val
         }
+        if let raw = UserDefaults.standard.string(forKey: Self.engineKey),
+           let val = EmulationConfig.EngineChoice(rawValue: raw) {
+            emulationConfig.engine = val
+        }
+        if UserDefaults.standard.object(forKey: Self.filter6581Key) != nil {
+            emulationConfig.filter6581Curve = UserDefaults.standard.double(forKey: Self.filter6581Key)
+        }
+        if UserDefaults.standard.object(forKey: Self.filter8580Key) != nil {
+            emulationConfig.filter8580Curve = UserDefaults.standard.double(forKey: Self.filter8580Key)
+        }
         player.emulationConfig = emulationConfig
     }
 
@@ -313,6 +326,9 @@ public final class AppState {
         UserDefaults.standard.set(config.clock.rawValue, forKey: Self.clockKey)
         UserDefaults.standard.set(config.digiBoost, forKey: Self.digiBoostKey)
         UserDefaults.standard.set(config.sampling.rawValue, forKey: Self.samplingKey)
+        UserDefaults.standard.set(config.engine.rawValue, forKey: Self.engineKey)
+        UserDefaults.standard.set(config.filter6581Curve, forKey: Self.filter6581Key)
+        UserDefaults.standard.set(config.filter8580Curve, forKey: Self.filter8580Key)
         player.emulationConfig = config
         if currentTuneID != nil {
             do {

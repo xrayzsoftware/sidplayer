@@ -82,10 +82,28 @@ public struct EmulationConfig: Sendable, Equatable {
         }
     }
 
+    public enum EngineChoice: String, Sendable, CaseIterable {
+        case residfp = "residfp"
+        case sidlite = "sidlite"
+
+        public var label: String {
+            switch self {
+            case .residfp: return "reSIDfp"
+            case .sidlite: return "SIDLite"
+            }
+        }
+    }
+
     public var sidModel: SIDModelChoice = .auto
     public var clock: ClockChoice = .auto
     public var digiBoost: Bool = false
     public var sampling: SamplingMethod = .interpolate
+    /// Emulation core. reSIDfp is the full-quality analog model (and the only
+    /// one whose 6581/8580 filter curve is adjustable); SIDLite is lighter.
+    public var engine: EngineChoice = .residfp
+    /// 6581 / 8580 filter curve, 0…1 (dark → bright). reSIDfp only.
+    public var filter6581Curve: Double = 0.5
+    public var filter8580Curve: Double = 0.5
 
     public init() {}
 }
@@ -243,5 +261,8 @@ public final class SIDPlayerEngine {
         bridge.digiBoost = config.digiBoost
         bridge.samplingMethod = (config.sampling == .resample)
             ? .resample : .interpolate
+        bridge.useReSIDfp = (config.engine == .residfp)
+        bridge.filter6581Curve = config.filter6581Curve
+        bridge.filter8580Curve = config.filter8580Curve
     }
 }

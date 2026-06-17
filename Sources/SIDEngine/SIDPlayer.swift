@@ -207,7 +207,12 @@ public final class SIDPlayer: @unchecked Sendable {
 
     private func applyConfigToAllEngines() {
         engine.applyConfig(emulationConfig)
-        for ve in voiceEngines { ve.applyConfig(emulationConfig) }
+        // The voice-scope engines only feed visualizers, so they don't need
+        // reSIDfp's costlier analog model — force SIDLite to keep the 3 extra
+        // engines cheap regardless of the audible engine choice.
+        var voiceConfig = emulationConfig
+        voiceConfig.engine = .sidlite
+        for ve in voiceEngines { ve.applyConfig(voiceConfig) }
     }
 
     private func syncVoiceEngines(toSong song: Int) {
