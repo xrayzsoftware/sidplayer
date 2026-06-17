@@ -98,6 +98,8 @@ private struct SecondaryVisualizer: View {
                 SpectrogramView(tap: state.player.vizTap)
             case .vectorscope:
                 VectorscopeView(tap: state.player.vizTap)
+            case .registers:
+                RegisterMonitorView(latch: state.player.registerLatch)
             }
 
             Button {
@@ -109,7 +111,7 @@ private struct SecondaryVisualizer: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(state.theme.textSecondary.opacity(0.85))
-            .help("Cycle visualizer (peak / waterfall / phosphor)")
+            .help("Cycle visualizer (peak / waterfall / phosphor / registers)")
             .padding(4)
         }
     }

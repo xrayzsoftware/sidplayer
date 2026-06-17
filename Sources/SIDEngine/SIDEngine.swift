@@ -175,6 +175,17 @@ public final class SIDPlayerEngine {
     /// Raw CIA1 Timer A value programmed by the tune (0 if VBI / not set yet).
     public var cia1TimerA: Int { bridge.cia1TimerA() }
 
+    /// Snapshots the last-written register image (32 bytes) of SID chip `sid`
+    /// (0, 1, or 2). Returns nil if that chip isn't present. Call from the
+    /// producer thread — it reads engine state and must not race `render`.
+    public func readRegisters(sid: Int = 0) -> [UInt8]? {
+        var buf = [UInt8](repeating: 0, count: 32)
+        let ok = buf.withUnsafeMutableBufferPointer { ptr in
+            bridge.readRegisters(ptr.baseAddress!, forSID: sid)
+        }
+        return ok ? buf : nil
+    }
+
     /// Provides C64 system ROMs to the engine. Many RSID tunes call into
     /// KERNAL routines and won't play correctly without these. Pass nil
     /// to clear (uses internal fallback patches; some tunes will still fail).

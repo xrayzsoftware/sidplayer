@@ -58,13 +58,14 @@ public final class AppState {
 
     // MARK: Visualizer mode
     public enum SecondaryVizMode: String, CaseIterable, Sendable {
-        case peakMeter, spectrogram, vectorscope
+        case peakMeter, spectrogram, vectorscope, registers
 
         public var label: String {
             switch self {
             case .peakMeter:   return "PEAKS"
             case .spectrogram: return "WATERFALL"
             case .vectorscope: return "PHOSPHOR"
+            case .registers:   return "REGISTERS"
             }
         }
     }
@@ -216,6 +217,10 @@ public final class AppState {
     public var currentTime: TimeInterval = 0
     public var currentSubtune: Int = 1
     public var subtuneCount: Int = 1
+    /// Clock of the currently loaded tune, cached at play-time so the register
+    /// monitor can decode oscillator pitch (PAL vs NTSC) without touching the
+    /// engine or catalog on its redraw path.
+    public private(set) var currentTuneClock: SIDClock = .unknown
     public var defaultLengthMs: Int = 0
     /// Per-subtune lengths in ms (0-indexed by subtune). Empty if unknown.
     public var subtuneLengthsMs: [Int] = []
@@ -665,9 +670,11 @@ public final class AppState {
             }
             try player.load(path: abs)
             try player.play()
+            let info         = player.info
             currentTuneID    = tuneID
             currentSubtune   = player.currentSong
-            subtuneCount     = player.info?.songCount ?? 1
+            subtuneCount     = info?.songCount ?? 1
+            currentTuneClock = info?.clock ?? .unknown
             defaultLengthMs  = row.defaultLengthMs ?? 0
             subtuneLengthsMs = ((try? db.lengths(tuneId: tuneID)) ?? []).map(\.durationMs)
             isPlaying        = true

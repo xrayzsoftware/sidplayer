@@ -38,6 +38,11 @@ public final class SIDPlayer: @unchecked Sendable {
     /// voice engine failures cannot break the audible mix.
     public let voiceTaps: [VizTap]
     private let voiceEngines: [SIDPlayerEngine]
+
+    /// Latest SID register image of the main (audible) engine, published by the
+    /// producer thread for the register monitor. Decoupled from the audio path —
+    /// reading it is a single getSidStatus call per chunk.
+    public let registerLatch = RegisterLatch()
     /// When false, the producer thread skips rendering the three voice engines.
     /// Each is a full C64+SID emulation — the per-voice scopes can't be derived
     /// from the main engine's already-mixed output, and the C64 runs at ~1 MHz
@@ -316,6 +321,13 @@ public final class SIDPlayer: @unchecked Sendable {
                     // stall the ring and underrun the output. A dropped viz
                     // chunk is invisible; a stalled ring is audible.
                     if m > 0 { voiceTaps[i].tryAppend(voiceScratch[i], count: m) }
+                }
+                // Publish the main engine's register image for the register
+                // monitor. One getSidStatus call per chunk (~43 Hz) — negligible,
+                // and gated with the voice scopes since the slot is hidden when
+                // visualizers are off.
+                if let regs = engine.readRegisters(sid: 0) {
+                    registerLatch.publish(regs)
                 }
             }
 

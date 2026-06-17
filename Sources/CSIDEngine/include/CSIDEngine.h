@@ -83,6 +83,14 @@ typedef NS_ENUM(NSInteger, CSIDSampling) {
 /// if VBI-driven. Convertible to a play-rate multiplier of the video frame.
 - (NSInteger)cia1TimerA;
 
+/// Fills `outRegs` (must hold 32 bytes) with the last values written to the
+/// registers of SID chip `sidNum` (0, 1, or 2) — i.e. the tune's programmed
+/// frequency / waveform / ADSR / filter state. Returns NO if that chip doesn't
+/// exist (e.g. chip 1 on a single-SID tune). Only meaningful after startSong:.
+/// Call from the producer thread, between renderFrames: calls — it reads engine
+/// state and must not race a render.
+- (BOOL)readRegisters:(uint8_t *)outRegs forSID:(NSInteger)sidNum;
+
 /// Loads C64 system ROMs (KERNAL/BASIC/CHARGEN) into the engine. Required
 /// for many RSID tunes that call into KERNAL routines. Pass nil for any
 /// ROM you don't have (fewer tunes will work). Each NSData should hold the
