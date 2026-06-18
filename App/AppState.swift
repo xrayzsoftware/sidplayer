@@ -29,6 +29,7 @@ public final class AppState {
         case playlists                  // root: list of user playlists
         case playlist(Int64)            // viewing a single playlist by id
         case recentlyPlayed             // play history
+        case mostPlayed                 // cumulative play counts
 
         /// Tab-bar grouping. `.playlists` and `.playlist(_)` share a tab.
         public var category: String {
@@ -38,6 +39,7 @@ public final class AppState {
             case .browse:           return "browse"
             case .playlists, .playlist: return "playlists"
             case .recentlyPlayed:   return "recent"
+            case .mostPlayed:       return "mostplayed"
             }
         }
     }
@@ -50,6 +52,8 @@ public final class AppState {
     public var recentCount: Int = 0
     public var playlists: [Playlist] = []
     public var playlistCounts: [Int64: Int] = [:]
+    /// Cumulative play count per tune id, populated when entering Most-Played.
+    public var playCounts: [Int64: Int] = [:]
 
     // MARK: Theme
     public var theme: AppTheme = .systemDefault
@@ -225,8 +229,18 @@ public final class AppState {
     /// Per-subtune lengths in ms (0-indexed by subtune). Empty if unknown.
     public var subtuneLengthsMs: [Int] = []
     public var volume: Double = 0.8 {
-        didSet { player.setVolume(Float(volume)) }
+        didSet {
+            player.setVolume(Float(volume))
+            UserDefaults.standard.set(volume, forKey: Self.volumeKey)
+        }
     }
+
+    /// Resolves the playing tune to its csdb.dk entry (created at bootstrap so
+    /// the cache lives under the app-support dir).
+    private(set) var csdb: CSDbService?
+
+    /// macOS Now Playing / media-key bridge. Command callbacks are wired in init.
+    private let nowPlaying = NowPlayingController()
 
     private var ticker: Task<Void, Never>?
 
@@ -244,9 +258,14 @@ public final class AppState {
     private static let engineKey      = "engine.v1"
     private static let filter6581Key  = "filter6581Curve.v1"
     private static let filter8580Key  = "filter8580Curve.v1"
+    private static let volumeKey      = "volume.v1"
 
     public init() {
+        if UserDefaults.standard.object(forKey: Self.volumeKey) != nil {
+            volume = UserDefaults.standard.double(forKey: Self.volumeKey)
+        }
         player.setVolume(Float(volume))
+        wireRemoteCommands()
         loadFavorites()
         loadTheme()
         if UserDefaults.standard.object(forKey: Self.scrollerKey) != nil {
@@ -268,6 +287,41 @@ public final class AppState {
             repeatMode = mode
         }
         loadEmulationConfig()
+    }
+
+    // MARK: Now Playing / media keys
+
+    private func wireRemoteCommands() {
+        nowPlaying.onTogglePlayPause = { [weak self] in self?.togglePlayPause() }
+        nowPlaying.onNext           = { [weak self] in self?.skipForward() }
+        nowPlaying.onPrevious       = { [weak self] in self?.skipBackward() }
+        nowPlaying.onPlay = { [weak self] in
+            guard let self, !self.isPlaying else { return }
+            self.togglePlayPause()
+        }
+        nowPlaying.onPause = { [weak self] in
+            guard let self, self.isPlaying else { return }
+            self.togglePlayPause()
+        }
+    }
+
+    /// Republish full Now Playing metadata for the current tune/subtune. Cheap
+    /// (one keyed catalog read); called on track and subtune changes.
+    private func refreshNowPlaying() {
+        guard let id = currentTuneID, let row = try? catalog?.tune(id: id) else {
+            nowPlaying.clear()
+            return
+        }
+        let idx = currentSubtune - 1
+        let lenMs = (idx >= 0 && idx < subtuneLengthsMs.count)
+            ? subtuneLengthsMs[idx] : defaultLengthMs
+        nowPlaying.update(
+            title: row.title ?? "Unknown",
+            artist: row.author ?? "Unknown",
+            durationSec: Double(lenMs) / 1000,
+            elapsedSec: currentTime,
+            isPlaying: isPlaying
+        )
     }
 
     public func cycleSecondaryViz() {
@@ -482,6 +536,8 @@ public final class AppState {
         do {
             let db = try CatalogDB(url: dbURL)
             self.catalog = db
+            self.csdb = CSDbService(
+                cacheDir: support.appendingPathComponent("csdb-cache", isDirectory: true))
 
             // Prefer a previously-bookmarked user-chosen folder; fall back to
             // the default app-support `hvsc/` location populated by the
@@ -644,6 +700,15 @@ public final class AppState {
             self.sortedRows = self.rows
             self.browseDirs = []
 
+        case .mostPlayed:
+            let results = try db.mostPlayed(limit: 100)
+            self.rows = results.compactMap { TuneItem(row: $0.tune) }
+            self.sortedRows = self.rows
+            var counts: [Int64: Int] = [:]
+            for r in results { if let id = r.tune.id { counts[id] = r.count } }
+            self.playCounts = counts
+            self.browseDirs = []
+
         case .playlists:
             self.rows = []
             self.sortedRows = []
@@ -698,6 +763,7 @@ public final class AppState {
             startTicker()
             try? db.recordPlay(tuneId: tuneID, subtune: player.currentSong)
             recentCount = (try? db.recentlyPlayedCount()) ?? recentCount
+            refreshNowPlaying()
         } catch {
             lastError = error.localizedDescription
         }
@@ -711,6 +777,7 @@ public final class AppState {
             try? player.play()
             isPlaying = true
         }
+        nowPlaying.setPlaying(isPlaying, elapsedSec: currentTime)
     }
 
     public func stop() {
@@ -719,12 +786,14 @@ public final class AppState {
         currentTime = 0
         ticker?.cancel()
         ticker = nil
+        nowPlaying.clear()
     }
 
     public func skipForward() {
         if subtuneCount > 1 {
             try? player.nextSong()
             currentSubtune = player.currentSong
+            refreshNowPlaying()
         } else {
             jumpToAdjacentTrack(offset: +1)
         }
@@ -734,6 +803,7 @@ public final class AppState {
         if subtuneCount > 1 {
             try? player.previousSong()
             currentSubtune = player.currentSong
+            refreshNowPlaying()
         } else {
             jumpToAdjacentTrack(offset: -1)
         }
@@ -805,11 +875,13 @@ public final class AppState {
     public func nextSubtune() {
         try? player.nextSong()
         currentSubtune = player.currentSong
+        refreshNowPlaying()
     }
 
     public func previousSubtune() {
         try? player.previousSong()
         currentSubtune = player.currentSong
+        refreshNowPlaying()
     }
 
     private func startTicker() {
@@ -840,6 +912,7 @@ public final class AppState {
             try? player.nextSong()
             currentSubtune = player.currentSong
             currentTime = 0
+            refreshNowPlaying()
         } else if repeatMode == .one, let id = currentTuneID {
             Task { await play(tuneID: id) }
         } else {

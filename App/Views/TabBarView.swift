@@ -11,6 +11,7 @@ struct TabBarView: View {
             tab(.browse,     title: "Browse",    icon: "folder.fill")
             tab(.recentlyPlayed, title: "Recent", icon: "clock.fill",
                 badge: state.recentCount == 0 ? nil : "\(state.recentCount)")
+            tab(.mostPlayed, title: "Top", icon: "chart.bar.fill")
             tab(.playlists,  title: "Playlists", icon: "music.note.list",
                 badge: state.playlists.isEmpty ? nil : "\(state.playlists.count)")
             Spacer(minLength: 0)

@@ -4,6 +4,7 @@ import SIDCatalog
 struct NowPlayingHeader: View {
     @Environment(AppState.self) private var state
     @Environment(\.openWindow) private var openWindow
+    @State private var showCSDb = false
 
     var body: some View {
         let row: TuneRow? = state.currentTuneID.flatMap { id in
@@ -79,6 +80,15 @@ struct NowPlayingHeader: View {
                 .buttonStyle(.plain)
                 .help(state.showScroller ? "Hide STIL scroller" : "Show STIL scroller")
 
+                Button { showCSDb = true } label: {
+                    Image(systemName: "globe")
+                        .font(.system(size: 16))
+                        .foregroundStyle(state.theme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(row == nil)
+                .help("Look up on CSDb (csdb.dk)")
+
                 Button { state.showSettingsSheet = true } label: {
                     Image(systemName: "gearshape")
                         .font(.system(size: 16))
@@ -87,6 +97,10 @@ struct NowPlayingHeader: View {
                 .buttonStyle(.plain)
                 .help("Library settings")
             }
+        }
+        .sheet(isPresented: $showCSDb) {
+            CSDbPanel(path: row?.path ?? "", title: row?.title)
+                .environment(state)
         }
     }
 

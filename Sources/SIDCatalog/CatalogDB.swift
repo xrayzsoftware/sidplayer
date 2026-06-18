@@ -214,6 +214,24 @@ public final class CatalogDB: Sendable {
             try db.create(index: "play_history_playedAt",
                           on: "play_history", columns: ["playedAt"])
         }
+        m.registerMigration("v4_play_counts") { db in
+            // Cumulative per-tune play totals. Separate from play_history because
+            // history is pruned to the newest 1000 rows, so its COUNT(*) under-
+            // reports long-term totals — this table never prunes.
+            try db.create(table: "play_counts") { t in
+                t.column("tuneId", .integer).primaryKey()
+                    .references("tunes", onDelete: .cascade)
+                t.column("count",      .integer).notNull().defaults(to: 0)
+                t.column("lastPlayed", .datetime).notNull()
+            }
+            // Backfill from existing history so prior plays aren't lost.
+            try db.execute(sql: """
+                INSERT INTO play_counts (tuneId, count, lastPlayed)
+                SELECT tuneId, COUNT(*), MAX(playedAt)
+                FROM play_history
+                GROUP BY tuneId
+            """)
+        }
 
         return m
     }
@@ -580,6 +598,14 @@ public final class CatalogDB: Sendable {
         try dbWriter.write { db in
             var row = PlayHistoryRow(tuneId: tuneId, subtune: subtune)
             try row.insert(db)
+            // Bump the cumulative count (survives the history prune below).
+            try db.execute(sql: """
+                INSERT INTO play_counts (tuneId, count, lastPlayed)
+                VALUES (?, 1, ?)
+                ON CONFLICT(tuneId) DO UPDATE SET
+                    count = count + 1,
+                    lastPlayed = excluded.lastPlayed
+            """, arguments: [tuneId, row.playedAt])
             let count = try PlayHistoryRow.fetchCount(db)
             if count > 1000 {
                 try db.execute(sql: """
@@ -610,6 +636,29 @@ public final class CatalogDB: Sendable {
     public func recentlyPlayedCount() throws -> Int {
         try dbWriter.read { db in
             try Int.fetchOne(db, sql: "SELECT COUNT(DISTINCT tuneId) FROM play_history") ?? 0
+        }
+    }
+
+    /// Most-played tunes, highest count first (ties broken by recency), paired
+    /// with their cumulative play count.
+    public func mostPlayed(limit: Int = 100) throws -> [(tune: TuneRow, count: Int)] {
+        try dbWriter.read { db in
+            let pairs = try Row.fetchAll(db, sql: """
+                SELECT tuneId, count FROM play_counts
+                WHERE count > 0
+                ORDER BY count DESC, lastPlayed DESC
+                LIMIT ?
+            """, arguments: [limit])
+            let ids = pairs.map { $0["tuneId"] as Int64 }
+            guard !ids.isEmpty else { return [] }
+            let counts = Dictionary(uniqueKeysWithValues:
+                pairs.map { ($0["tuneId"] as Int64, $0["count"] as Int) })
+            let byID = try TuneRow.filter(ids.contains(Column("id"))).fetchAll(db)
+                .reduce(into: [Int64: TuneRow]()) { if let id = $1.id { $0[id] = $1 } }
+            // Preserve the count-ordered sequence; drop any id without a tune row.
+            return ids.compactMap { id in
+                byID[id].map { (tune: $0, count: counts[id] ?? 0) }
+            }
         }
     }
 

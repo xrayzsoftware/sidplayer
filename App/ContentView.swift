@@ -62,6 +62,7 @@ struct ContentView: View {
                 case .playlists:       PlaylistsRootView()
                 case .playlist:        PlaylistDetailView()
                 case .recentlyPlayed:  TrackListView()
+                case .mostPlayed:      MostPlayedView()
                 default:               TrackListView()
                 }
 

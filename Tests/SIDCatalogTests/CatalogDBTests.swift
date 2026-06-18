@@ -55,6 +55,29 @@ final class CatalogDBTests: XCTestCase {
         XCTAssertEqual(lens.map(\.durationMs), [185_000, 55_000, 61_000])
     }
 
+    func testPlayCountsRankByCumulativePlays() throws {
+        let db = try CatalogDB()
+        let a = try db.insert(tune: makeRow(path: "a.sid", title: "A", author: "X"), lengths: [1000])
+        let b = try db.insert(tune: makeRow(path: "b.sid", title: "B", author: "Y"), lengths: [1000])
+
+        // B played 3×, A once → B ranks first with the right count.
+        try db.recordPlay(tuneId: a)
+        for _ in 0..<3 { try db.recordPlay(tuneId: b) }
+
+        let top = try db.mostPlayed(limit: 10)
+        XCTAssertEqual(top.map(\.tune.id), [b, a])
+        XCTAssertEqual(top.map(\.count), [3, 1])
+    }
+
+    func testPlayCountSurvivesHistoryPrune() throws {
+        let db = try CatalogDB()
+        let id = try db.insert(tune: makeRow(path: "p.sid", title: "P", author: "Z"), lengths: [1000])
+        // Exceed the 1000-row history prune; the cumulative count must not be
+        // capped by it (the whole reason play_counts is a separate table).
+        for _ in 0..<1005 { try db.recordPlay(tuneId: id) }
+        XCTAssertEqual(try db.mostPlayed().first?.count, 1005)
+    }
+
     func testDefaultLengthUsesStartSong() throws {
         let db = try CatalogDB()
         let id = try db.insert(
