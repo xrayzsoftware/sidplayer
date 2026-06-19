@@ -16,15 +16,20 @@ Built on [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) for cycle-
 
 ## Features
 
-- **One-click HVSC bootstrap.** Discovers the latest release via `hvsc.c64.org/api/v1/version/7z`, downloads the ~640 MB archive, extracts via the system `tar` (libarchive handles 7z natively on macOS), parses every `.sid` header into a SQLite catalog, and matches each tune to its HVSC `Songlengths.md5` entry.
-- **Five-tab catalog browser**: All (~60k tunes with FTS5 full-text search), Favorites (★ persisted), Browse (HVSC directory tree with breadcrumb), Recent (play history), and Playlists.
+- **One-click HVSC bootstrap.** Discovers the latest release via `hvsc.c64.org/api/v1/version/7z`, downloads the ~640 MB archive, extracts it with a pure-Swift 7z reader (SWCompression — no shell-out, so the app stays inside the App Sandbox), parses every `.sid` header into a SQLite catalog, and matches each tune to its HVSC `Songlengths.md5` entry.
+- **Six-tab catalog browser**: All (~60k tunes with FTS5 full-text search), Favorites (★ persisted), Browse (HVSC directory tree with breadcrumb), Recent (play history), Top (Most-Played), and Playlists.
+- **reSIDfp emulation core** — full-quality analog model with tunable 6581 and 8580 filter curves (dark ↔ bright), persisted across launches. The lightweight SIDLite core still drives the per-voice visualizer engines.
 - **Search filters** — narrow results by SID model (6581/8580), clock speed (PAL/NTSC), and year range, combined with text search.
 - **Shuffle & repeat** — shuffle mode picks random tracks from the current list; repeat modes: off, all, one.
+- **Now Playing & media keys** — integrates with macOS `MPNowPlayingInfoCenter`/`MPRemoteCommandCenter`, so title/composer/elapsed appear in Control Center and the keyboard play/pause/next/prev keys drive the player.
+- **Per-tune play counts & Most-Played view** — every play is counted (and survives history pruning); the Top tab ranks the catalog by cumulative plays.
+- **CSDb release panel** — a globe button resolves the playing tune to its [csdb.dk](https://csdb.dk) entry (name/author/year) and lists the demoscene releases it was used in, with links. Resolution scrapes CSDb's search (it has no path API) and is cached to disk.
 - **Sortable, themed track list** with title, composer, year, subtune count, and duration columns.
 - **Per-voice oscilloscope** — three additional libsidplayfp instances run in lockstep with the main engine, each with two voices muted, feeding three colored waveform traces. Audio path is independent so a viz-engine failure can't break sound.
-- **Cyclic secondary visualizer** — toggle between a Winamp-style 40-band peak meter, a scrolling FFT waterfall, and a phosphor-persistence oscilloscope. All vDSP-backed, log-spaced from 50 Hz to 12 kHz, and themed.
+- **Cyclic secondary visualizer** — toggle between a Winamp-style 40-band peak meter, a scrolling FFT waterfall, a phosphor-persistence oscilloscope, and a live SID register monitor (per-voice note/waveform/ADSR readout). All vDSP-backed, log-spaced from 50 Hz to 12 kHz, and themed.
 - **STIL scroller** — HVSC's annotations (sample sources, composer notes, "reused in Wizball" trivia) scroll right-to-left in your theme's accent color, locked to the display refresh.
 - **Subtune navigation** — smart prev/next: cycles within a multi-subtune tune, jumps between tracks for single-subtune tunes. Auto-advances at song-length end.
+- **Persistent volume** — the volume slider restores its last position on launch.
 - **8 VSCode-inspired themes** — System Default, Nord, Tokyo Night, Dracula, Gruvbox Dark, Catppuccin Mocha, Solarized Dark, Monokai. Theme tokens reach the title bar, visualizers, peak gradient, voice colors, scroller text, and chrome.
 
 ---
@@ -93,7 +98,7 @@ The CLIs share the same engine and catalog as the GUI app — useful for headles
 swift test
 ```
 
-21 tests covering PSID/RSID header parsing (incl. v2+ flag bits → clock/model), HVSC `Songlengths.md5` parser (including CRLF + `[Database]` header regression cases), and end-to-end indexer behavior against a synthetic HVSC tree.
+41 tests covering PSID/RSID header parsing (incl. v2+ flag bits → clock/model), HVSC `Songlengths.md5` parser (including CRLF + `[Database]` header regression cases), SID register reads, per-tune play counts (ranking + survival across history pruning), and end-to-end indexer behavior against a synthetic HVSC tree.
 
 ---
 
@@ -107,16 +112,20 @@ sidplayer/
 │   ├── ContentView.swift             top-level layout
 │   ├── Theme.swift                   AppTheme + 8 presets
 │   ├── TuneItem.swift                view-model wrapper for TuneRow
+│   ├── NowPlayingController.swift    MPNowPlayingInfoCenter + media keys
+│   ├── CSDbService.swift             HVSC path → csdb.dk resolver (cached)
 │   ├── AppIcon.icns                  10-size icon, hand-built via iconutil
 │   └── Views/                        all subviews
-│       └── Visualizers/              waveform + peak meter
+│       └── Visualizers/              waveform, peak meter, FFT waterfall,
+│                                     phosphor scope, SID register monitor
 │
 ├── Sources/
 │   ├── CSIDEngine/                   Obj-C++ bridge over libsidplayfp
 │   │   ├── include/CSIDEngine.h      pure Obj-C public API for Swift
 │   │   ├── CSIDEngine.mm             Obj-C++ wrapping sidplayfp + SidTune
-│   │   └── Vendor/                   bundled libsidplayfp static archive
-│   │       ├── lib/libsidplayfp.a    arm64 static lib (~470 KB)
+│   │   └── Vendor/                   bundled GPL static archives (arm64)
+│   │       ├── lib/libsidplayfp.a    libsidplayfp + SIDLite (~5.9 MB)
+│   │       ├── lib/libresidfp.a      reSIDfp analog core (~1.9 MB)
 │   │       ├── include/sidplayfp/    libsidplayfp's public headers
 │   │       └── LICENSE.libsidplayfp  GPL-2.0 license text
 │   │
