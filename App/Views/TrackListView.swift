@@ -132,6 +132,20 @@ struct TrackListView: View {
             Task { await state.exportTuneAsWAV(tuneID: tuneID, to: dest) }
         }
         .disabled(state.hvscSource == nil)
+
+        Button("Export as MIDI…") {
+            guard let db = state.catalog,
+                  state.hvscSource != nil,
+                  let row = try? db.tune(id: tuneID) else { return }
+            let title  = (row.title  ?? "Unknown").replacingOccurrences(of: "/", with: "-")
+            let author = (row.author ?? "Unknown").replacingOccurrences(of: "/", with: "-")
+            let panel  = NSSavePanel()
+            if let mid = UTType(filenameExtension: "mid") { panel.allowedContentTypes = [mid] }
+            panel.nameFieldStringValue = "\(title) - \(author).mid"
+            guard panel.runModal() == .OK, let dest = panel.url else { return }
+            Task { await state.exportTuneAsMIDI(tuneID: tuneID, to: dest) }
+        }
+        .disabled(state.hvscSource == nil)
     }
 
     private func lengthMs(for item: TuneItem) -> Int {

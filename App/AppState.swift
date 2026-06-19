@@ -934,17 +934,17 @@ public final class AppState {
 
     // MARK: Export
 
-    /// Renders the given tune (using its default/start subtune) to a WAV file
-    /// at `destination`. The save panel is handled by the caller (TrackListView)
-    /// so this method takes a pre-chosen URL and just does the work.
-    public func exportTuneAsWAV(tuneID: Int64, to destination: URL) async {
+    /// Resolves a tune id to the inputs both export paths need: its on-disk
+    /// path, the subtune to render, and that subtune's length. Returns nil (and
+    /// sets `lastError`) when the tune or HVSC source can't be resolved.
+    private func exportParams(tuneID: Int64) -> (path: String, subtune: Int, durMs: Int)? {
         guard let db = catalog, let source = hvscSource else {
             lastError = "HVSC not configured."
-            return
+            return nil
         }
         guard let row = try? db.tune(id: tuneID) else {
             lastError = "Tune not found in catalog."
-            return
+            return nil
         }
 
         // If this tune is currently playing use the live subtune; otherwise
@@ -963,13 +963,36 @@ public final class AppState {
             : (row.defaultLengthMs ?? 0)
 
         let absPath = source.root.appendingPathComponent(row.path).path
-        let config  = emulationConfig
-        let sr      = Int(player.sampleRate)
+        return (absPath, subtune, durMs)
+    }
 
+    /// Renders the given tune (using its default/start subtune) to a WAV file
+    /// at `destination`. The save panel is handled by the caller (TrackListView)
+    /// so this method takes a pre-chosen URL and just does the work.
+    public func exportTuneAsWAV(tuneID: Int64, to destination: URL) async {
+        guard let p = exportParams(tuneID: tuneID) else { return }
+        let config = emulationConfig
+        let sr     = Int(player.sampleRate)
         do {
             try await Task.detached(priority: .userInitiated) {
-                try exportSIDToWAV(path: absPath, song: subtune, durationMs: durMs,
+                try exportSIDToWAV(path: p.path, song: p.subtune, durationMs: p.durMs,
                                    sampleRate: sr, config: config, to: destination)
+            }.value
+        } catch {
+            lastError = "Export failed: \(error.localizedDescription)"
+        }
+    }
+
+    /// Transcribes the given tune's register activity to a Standard MIDI File at
+    /// `destination`. Like the WAV path, the save panel is the caller's job.
+    public func exportTuneAsMIDI(tuneID: Int64, to destination: URL) async {
+        guard let p = exportParams(tuneID: tuneID) else { return }
+        let config = emulationConfig
+        let sr     = Int(player.sampleRate)
+        do {
+            try await Task.detached(priority: .userInitiated) {
+                try exportSIDToMIDI(path: p.path, song: p.subtune, durationMs: p.durMs,
+                                    sampleRate: sr, config: config, to: destination)
             }.value
         } catch {
             lastError = "Export failed: \(error.localizedDescription)"
