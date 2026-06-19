@@ -37,6 +37,26 @@ struct CSDbPanel: View {
                     centered { ProgressView("Looking up csdb.dk…").controlSize(.small) }
                 } else if let e = entry, e.found {
                     content(e)
+                } else if entry == nil {
+                    // Transient: csdb.dk didn't answer (it 503s under load).
+                    centered {
+                        VStack(spacing: 8) {
+                            Image(systemName: "wifi.exclamationmark")
+                                .font(.system(size: 30))
+                                .foregroundStyle(.tertiary)
+                            Text("Couldn’t reach csdb.dk")
+                                .font(.system(size: 13))
+                                .foregroundStyle(theme.textSecondary)
+                            Text("The service didn’t respond (it’s often busy). Try again in a moment.")
+                                .font(.system(size: 11))
+                                .foregroundStyle(theme.textSecondary)
+                                .multilineTextAlignment(.center)
+                                .frame(maxWidth: 300)
+                            Button("Retry") { Task { await load() } }
+                                .controlSize(.small)
+                                .padding(.top, 2)
+                        }
+                    }
                 } else {
                     centered {
                         VStack(spacing: 8) {

@@ -537,7 +537,9 @@ public final class AppState {
             let db = try CatalogDB(url: dbURL)
             self.catalog = db
             self.csdb = CSDbService(
-                cacheDir: support.appendingPathComponent("csdb-cache", isDirectory: true))
+                // -v2: the v1 resolver could mis-pair a path with a neighbouring
+                // SID id; bump the dir so those wrong entries are ignored.
+                cacheDir: support.appendingPathComponent("csdb-cache-v2", isDirectory: true))
 
             // Prefer a previously-bookmarked user-chosen folder; fall back to
             // the default app-support `hvsc/` location populated by the

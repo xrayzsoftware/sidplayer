@@ -17,10 +17,21 @@ struct CSDbEntry: Codable, Sendable {
     var name: String?
     var author: String?
     var released: String?
+    var hvscPath: String?
     var releases: [CSDbRelease]
 
     var found: Bool { sidId != nil }
     var pageURL: URL? { sidId.flatMap { URL(string: "https://csdb.dk/sid/?id=\($0)") } }
+
+    static let notFound = CSDbEntry(sidId: nil, name: nil, author: nil,
+                                    released: nil, hvscPath: nil, releases: [])
+
+    /// True when this entry's CSDb HVSCPath matches the tune we looked up — the
+    /// guard against a search mis-pairing a path with a neighbouring SID link.
+    func matchesPath(_ target: String) -> Bool {
+        guard let p = hvscPath else { return false }
+        return p.compare(target, options: .caseInsensitive) == .orderedSame
+    }
 }
 
 /// Resolves an HVSC SID file to its csdb.dk entry and caches the result to disk.
@@ -56,21 +67,24 @@ actor CSDbService {
     // MARK: Fetch
 
     private func fetch(path: String, title: String?) async -> CSDbEntry? {
-        var sawResponse = false
+        let target = path.hasPrefix("/") ? path : "/" + path
+        var sawResults = false
         for query in searchQueries(path: path, title: title) {
             guard let url = searchURL(query: query) else { continue }
-            guard let html = await getString(url) else { continue }
-            sawResponse = true
-            if let sidId = resolveSidId(html: html, hvscPath: path) {
-                // Resolved an id but a failed detail fetch is transient → nil.
-                return await fetchDetails(sidId: sidId)
-            }
+            // CSDb sometimes answers with an empty body (rate-limit / bad query);
+            // treat that as a transient miss, not "not on CSDb".
+            guard let html = await getString(url), !html.isEmpty else { continue }
+            sawResults = true
+            guard let sidId = resolveCandidate(html: html, target: target) else { continue }
+            // A failed detail fetch is transient → nil (don't cache).
+            guard let details = await fetchDetails(sidId: sidId) else { return nil }
+            // Only trust the result if CSDb's own HVSCPath matches the tune we
+            // asked about — kills mis-pairings like 3884→3883.
+            if details.matchesPath(target) { return details }
         }
-        // Got search results but no path match → definitively not on CSDb.
-        // Got no response at all → transient, don't cache.
-        return sawResponse
-            ? CSDbEntry(sidId: nil, name: nil, author: nil, released: nil, releases: [])
-            : nil
+        // Searched and either found nothing or only mismatches → not on CSDb.
+        // No usable response at all → transient, don't cache.
+        return sawResults ? .notFound : nil
     }
 
     private func fetchDetails(sidId: Int) async -> CSDbEntry? {
@@ -88,19 +102,31 @@ actor CSDbService {
             name: delegate.sidName.isEmpty ? nil : delegate.sidName,
             author: delegate.sidAuthor.isEmpty ? nil : delegate.sidAuthor,
             released: delegate.sidReleased.isEmpty ? nil : delegate.sidReleased,
+            hvscPath: delegate.sidHVSCPath.isEmpty ? nil : delegate.sidHVSCPath,
             releases: releases
         )
     }
 
-    /// Find the `/sid/?id=N` that immediately follows the target HVSC path in
-    /// the search HTML (CSDb renders the play link — carrying the path — right
-    /// before the SID link in the same result row).
-    private func resolveSidId(html: String, hvscPath: String) -> Int? {
-        let target = hvscPath.hasPrefix("/") ? hvscPath : "/" + hvscPath
-        guard let r = html.range(of: target, options: .caseInsensitive) else { return nil }
-        let tail = html[r.upperBound...]
-        guard let m = tail.range(of: #"/sid/\?id=(\d+)"#, options: .regularExpression) else { return nil }
-        return Int(tail[m].drop(while: { !$0.isNumber }))
+    /// Pair each play link (carrying the HVSC path) with the SID link in the
+    /// *same* anchor pair — CSDb renders `…X.sid"><img…></a><a href="/sid/?id=N">`
+    /// per result row — and return the id whose path matches the target. A loose
+    /// "next /sid/ after the path" can grab a neighbouring row's id, so the
+    /// pairing is anchored to the exact row markup.
+    private func resolveCandidate(html: String, target: String) -> Int? {
+        let pattern = #"href="([^"]*?\.sid)"><img[^>]*></a><a href="/sid/\?id=(\d+)""#
+        guard let re = try? NSRegularExpression(pattern: pattern, options: [.caseInsensitive]) else {
+            return nil
+        }
+        let ns = html as NSString
+        for m in re.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
+            let href = ns.substring(with: m.range(at: 1))
+            // href is the full play URL; the HVSC path is its tail.
+            if href.range(of: target, options: [.caseInsensitive, .anchored, .backwards]) != nil
+                || href.hasSuffix(target) {
+                return Int(ns.substring(with: m.range(at: 2)))
+            }
+        }
+        return nil
     }
 
     private func searchQueries(path: String, title: String?) -> [String] {
@@ -180,7 +206,7 @@ actor CSDbService {
 /// fields, and release fields are read only when their immediate parent is the
 /// `<Release>` under `<UsedIn>`.
 private final class SIDXMLParser: NSObject, XMLParserDelegate {
-    var sidName = "", sidAuthor = "", sidReleased = ""
+    var sidName = "", sidAuthor = "", sidReleased = "", sidHVSCPath = ""
     var releases: [CSDbRelease] = []
 
     private var path: [String] = []
@@ -217,6 +243,7 @@ private final class SIDXMLParser: NSObject, XMLParserDelegate {
             case "Name":     sidName = text
             case "Author":   sidAuthor = text
             case "Released": sidReleased = text
+            case "HVSCPath": sidHVSCPath = text
             default: break
             }
         }
