@@ -539,7 +539,10 @@ public final class AppState {
             self.csdb = CSDbService(
                 // -v2: the v1 resolver could mis-pair a path with a neighbouring
                 // SID id; bump the dir so those wrong entries are ignored.
-                cacheDir: support.appendingPathComponent("csdb-cache-v2", isDirectory: true))
+                // v3: v2 could cache a permanent false .notFound when CSDb's
+                // XML had no HVSCPath (or failed to parse); those entries are
+                // indistinguishable from real negatives, so start fresh.
+                cacheDir: support.appendingPathComponent("csdb-cache-v3", isDirectory: true))
 
             // Prefer a previously-bookmarked user-chosen folder; fall back to
             // the default app-support `hvsc/` location populated by the
@@ -768,6 +771,10 @@ public final class AppState {
             refreshNowPlaying()
         } catch {
             lastError = error.localizedDescription
+            // A failed load/play leaves the player stopped (SIDPlayer restores
+            // its paused flag on error) — mirror that instead of leaving the
+            // old track marked "playing" over silence.
+            isPlaying = player.isPlaying
         }
     }
 
@@ -776,8 +783,15 @@ public final class AppState {
             player.pause()
             isPlaying = false
         } else {
-            try? player.play()
-            isPlaying = true
+            do {
+                try player.play()
+                isPlaying = true
+            } catch {
+                // e.g. the audio device went away — don't show "playing"
+                // over silence.
+                lastError = error.localizedDescription
+                isPlaying = false
+            }
         }
         nowPlaying.setPlaying(isPlaying, elapsedSec: currentTime)
     }
@@ -793,9 +807,7 @@ public final class AppState {
 
     public func skipForward() {
         if subtuneCount > 1 {
-            try? player.nextSong()
-            currentSubtune = player.currentSong
-            refreshNowPlaying()
+            switchSubtune { try player.nextSong() }
         } else {
             jumpToAdjacentTrack(offset: +1)
         }
@@ -803,12 +815,25 @@ public final class AppState {
 
     public func skipBackward() {
         if subtuneCount > 1 {
-            try? player.previousSong()
-            currentSubtune = player.currentSong
-            refreshNowPlaying()
+            switchSubtune { try player.previousSong() }
         } else {
             jumpToAdjacentTrack(offset: -1)
         }
+    }
+
+    /// Runs a subtune-switch on the player, surfacing failure instead of
+    /// swallowing it: on error the player has stopped its producer thread
+    /// (see SIDPlayer), so `isPlaying` must follow or the UI would show
+    /// "playing" over silence.
+    private func switchSubtune(_ op: () throws -> Void) {
+        do {
+            try op()
+        } catch {
+            lastError = error.localizedDescription
+            isPlaying = player.isPlaying
+        }
+        currentSubtune = player.currentSong
+        refreshNowPlaying()
     }
 
     /// Skip to an adjacent track. Repeat-one is deliberately *not* handled here
@@ -875,15 +900,11 @@ public final class AppState {
     }
 
     public func nextSubtune() {
-        try? player.nextSong()
-        currentSubtune = player.currentSong
-        refreshNowPlaying()
+        switchSubtune { try player.nextSong() }
     }
 
     public func previousSubtune() {
-        try? player.previousSong()
-        currentSubtune = player.currentSong
-        refreshNowPlaying()
+        switchSubtune { try player.previousSong() }
     }
 
     private func startTicker() {
@@ -911,10 +932,8 @@ public final class AppState {
         guard currentTime * 1000 >= Double(lenMs) else { return }
 
         if currentSubtune < subtuneCount {
-            try? player.nextSong()
-            currentSubtune = player.currentSong
+            switchSubtune { try player.nextSong() }
             currentTime = 0
-            refreshNowPlaying()
         } else if repeatMode == .one, let id = currentTuneID {
             Task { await play(tuneID: id) }
         } else {

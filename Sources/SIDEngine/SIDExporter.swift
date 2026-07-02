@@ -32,16 +32,14 @@ public func exportSIDToWAV(
     try exportEngine.load(path: path)
     try exportEngine.start(song: song, sampleRate: sampleRate)
 
-    // Create/truncate the file and write a 44-byte placeholder header.
-    // We seek back and patch it once we know the exact rendered byte count.
-    // The createFile check matters: if it fails over an existing file, the
-    // handle would silently append into stale PCM from a previous export.
-    guard FileManager.default.createFile(atPath: destination.path, contents: nil) else {
-        throw ExportError.cannotCreateFile(destination.path)
-    }
-    let fh = try FileHandle(forWritingTo: destination)
-    defer { try? fh.close() }
-    try fh.write(contentsOf: Data(count: 44))
+    // A WAV of Songlengths duration is tens of MB, so buffer the PCM in memory
+    // and write once, atomically. This can never clobber an existing file with
+    // a corrupt partial: on any failure the destination is untouched.
+    // (The 4 GB RIFF field limit is unreachable for any real Songlengths
+    // entry, but a corrupt one shouldn't trap on the UInt32 conversions.)
+    let pcmBytes = totalSamples * 2
+    guard pcmBytes <= Int(UInt32.max) - 36 else { throw ExportError.outputTooLarge }
+    var pcm = Data(capacity: pcmBytes)
 
     let chunkSize = 4096
     let scratch = UnsafeMutablePointer<Int16>.allocate(capacity: chunkSize)
@@ -51,19 +49,26 @@ public func exportSIDToWAV(
     while rendered < totalSamples {
         let want = min(chunkSize, totalSamples - rendered)
         let got  = exportEngine.render(into: scratch, count: want)
-        if got <= 0 { break }
+        if got <= 0 {
+            // The emulator stopped early (init failure, corrupt tune data).
+            // Fail loud instead of writing a silently truncated file.
+            throw ExportError.renderStalled(renderedMs: rendered * 1000 / sampleRate,
+                                            requestedMs: durationMs)
+        }
         // Int16 LE PCM — arm64/x86 are both little-endian; no byte swap needed.
-        try fh.write(contentsOf: Data(bytes: scratch, count: got * 2))
+        scratch.withMemoryRebound(to: UInt8.self, capacity: got * 2) {
+            pcm.append($0, count: got * 2)
+        }
         rendered += got
     }
 
-    // Patch the real header now that we know the sizes.
     let dataBytes = UInt32(rendered * 2)
     let fileBytes = dataBytes + 36  // total file size minus the 8-byte RIFF descriptor
-    try fh.seek(toOffset: 0)
-    try fh.write(contentsOf: sidWAVHeader(sampleRate: UInt32(sampleRate),
-                                          dataBytes: dataBytes,
-                                          fileBytes: fileBytes))
+    var file = sidWAVHeader(sampleRate: UInt32(sampleRate),
+                            dataBytes: dataBytes,
+                            fileBytes: fileBytes)
+    file.append(pcm)
+    try file.write(to: destination, options: .atomic)
 }
 
 // MARK: - SIDPlayer ROM helper
@@ -89,7 +94,8 @@ public extension SIDPlayer {
 // MARK: - WAV header
 
 /// Builds a standard 44-byte RIFF/WAV header for 16-bit mono PCM.
-private func sidWAVHeader(sampleRate: UInt32, dataBytes: UInt32, fileBytes: UInt32) -> Data {
+/// Internal (not private) so tests can pin the exact byte layout.
+func sidWAVHeader(sampleRate: UInt32, dataBytes: UInt32, fileBytes: UInt32) -> Data {
     var d = Data(capacity: 44)
     // RIFF chunk descriptor
     d += sidFourCC("RIFF")
@@ -120,12 +126,18 @@ public enum ExportError: LocalizedError, Sendable {
     case noTuneLoaded
     case zeroDuration
     case cannotCreateFile(String)
+    case renderStalled(renderedMs: Int, requestedMs: Int)
+    case outputTooLarge
 
     public var errorDescription: String? {
         switch self {
         case .noTuneLoaded: return "No tune is loaded — play a tune before exporting."
         case .zeroDuration:  return "Song length is zero; cannot export."
         case .cannotCreateFile(let path): return "Couldn't create the output file at \(path)."
+        case .renderStalled(let renderedMs, let requestedMs):
+            return String(format: "The emulator stopped %.1f s into a %.1f s export — the tune may be corrupt or unsupported.",
+                          Double(renderedMs) / 1000, Double(requestedMs) / 1000)
+        case .outputTooLarge: return "The requested duration is too long to export."
         }
     }
 }

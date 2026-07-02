@@ -78,9 +78,12 @@ actor CSDbService {
             guard let sidId = resolveCandidate(html: html, target: target) else { continue }
             // A failed detail fetch is transient → nil (don't cache).
             guard let details = await fetchDetails(sidId: sidId) else { return nil }
-            // Only trust the result if CSDb's own HVSCPath matches the tune we
-            // asked about — kills mis-pairings like 3884→3883.
-            if details.matchesPath(target) { return details }
+            // Reject only on an explicit HVSCPath mismatch — that's the
+            // mis-pairing guard (3884→3883). When CSDb has no HVSCPath at all,
+            // trust the id: resolveCandidate already matched the play link's
+            // path, and treating "untagged" as a mismatch would cache a
+            // permanent false .notFound for a tune that IS on CSDb.
+            if details.hvscPath == nil || details.matchesPath(target) { return details }
         }
         // Searched and either found nothing or only mismatches → not on CSDb.
         // No usable response at all → transient, don't cache.
@@ -93,7 +96,9 @@ actor CSDbService {
         let delegate = SIDXMLParser()
         let parser = XMLParser(data: data)
         parser.delegate = delegate
-        parser.parse()
+        // A malformed response (rate-limit HTML with a 200 status, truncation)
+        // is transient → nil, so it isn't cached as a definitive answer.
+        guard parser.parse() else { return nil }
         var releases = delegate.releases
         releases.sort { ($0.year ?? 0) > ($1.year ?? 0) }
         if releases.count > 60 { releases = Array(releases.prefix(60)) }
@@ -121,8 +126,7 @@ actor CSDbService {
         for m in re.matches(in: html, range: NSRange(location: 0, length: ns.length)) {
             let href = ns.substring(with: m.range(at: 1))
             // href is the full play URL; the HVSC path is its tail.
-            if href.range(of: target, options: [.caseInsensitive, .anchored, .backwards]) != nil
-                || href.hasSuffix(target) {
+            if href.range(of: target, options: [.caseInsensitive, .anchored, .backwards]) != nil {
                 return Int(ns.substring(with: m.range(at: 2)))
             }
         }

@@ -91,6 +91,19 @@ final class PSIDHeaderTests: XCTestCase {
         XCTAssertEqual(h.sidChips, 2)
     }
 
+    /// thirdSIDAddress (0x7B) lives inside the same 0x7C-byte header as
+    /// secondSIDAddress — a minimal spec-valid v4 header must yield 3 chips.
+    func testV4ThirdSIDAddressParsedInMinimalHeader() throws {
+        var d = makeCommandoHeader()                 // exactly 0x7C bytes
+        d.beWriteUInt16(at: 0x04, 4)                 // version 4
+        d[0x7A] = 0x42
+        d[0x7B] = 0x50
+        let h = try PSIDHeader(data: d)
+        XCTAssertEqual(h.secondSIDAddress, 0xD420)
+        XCTAssertEqual(h.thirdSIDAddress, 0xD500)
+        XCTAssertEqual(h.sidChips, 3)
+    }
+
     func testReadsRealCommandoFixtureIfPresent() throws {
         let fixture = URL(fileURLWithPath: "Tests/Fixtures/Commando.sid")
         guard FileManager.default.fileExists(atPath: fixture.path) else {

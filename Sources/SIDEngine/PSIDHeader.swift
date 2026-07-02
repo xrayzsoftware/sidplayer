@@ -111,7 +111,9 @@ public struct PSIDHeader: Sendable, Equatable {
             let lsb2 = data[0x7A]
             sid2 = lsb2 == 0 ? nil : 0xD000 | (UInt16(lsb2) << 4)
         }
-        if version >= 4 && data.count >= 0x7E {
+        // thirdSIDAddress is at 0x7B, inside the same 0x7C-byte v2+ header
+        // as secondSIDAddress — same length floor as the v3 branch.
+        if version >= 4 && data.count >= 0x7C {
             let lsb3 = data[0x7B]
             sid3 = lsb3 == 0 ? nil : 0xD000 | (UInt16(lsb3) << 4)
         }

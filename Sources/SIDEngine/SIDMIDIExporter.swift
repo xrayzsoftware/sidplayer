@@ -215,19 +215,21 @@ public func exportSIDToMIDI(
     let samplesPerFrame = Double(sampleRate) / playRateHz
     var sampleTarget = 0.0
     var rendered = 0
-    var lastFrame = totalFrames
 
-    outer: for f in 0..<totalFrames {
+    for f in 0..<totalFrames {
         sampleTarget += samplesPerFrame
         var want = Int(sampleTarget.rounded(.down)) - rendered
-        var stopped = false
         while want > 0 {
             let n = min(bufCap, want)
             let got = engine.render(into: scratch, count: n)
-            if got <= 0 { stopped = true; break }
+            if got <= 0 {
+                // The emulator stopped early (init failure, corrupt tune data).
+                // Fail loud instead of writing a silently truncated file.
+                throw ExportError.renderStalled(renderedMs: rendered * 1000 / sampleRate,
+                                                requestedMs: durationMs)
+            }
             rendered += got
             want -= got
-            if got < n { stopped = true; break }
         }
 
         var voices: [SIDRegisters.Voice] = []
@@ -237,10 +239,8 @@ public func exportSIDToMIDI(
             voices.append(contentsOf: SIDRegisters(image: image).voices)
         }
         tracker.step(frame: f, voices: voices)
-
-        if stopped { lastFrame = f + 1; break outer }
     }
-    tracker.finish(endFrame: lastFrame)
+    tracker.finish(endFrame: totalFrames)
 
     let programs = (0..<voiceCount).map { tracker.program(forVoice: $0) }
     let data = buildSMF(notes: tracker.notes, voiceCount: voiceCount,
@@ -250,7 +250,8 @@ public func exportSIDToMIDI(
 
 // MARK: - Standard MIDI File writer
 
-/// Builds a format-1 SMF: a tempo track plus one track per SID voice. Timing is
+/// Builds a format-1 SMF: a tempo track, one track per SID voice, and — when any
+/// notes were routed to percussion — one shared percussion track. Timing is
 /// real-time (120 BPM / 480 PPQ → 960 ticks/sec); no musical-bar quantisation is
 /// attempted, so playback speed is faithful but bars won't align to a grid.
 func buildSMF(notes: [TranscribedNote], voiceCount: Int,
@@ -268,16 +269,32 @@ func buildSMF(notes: [TranscribedNote], voiceCount: Int,
     tracks += smfTrack(events: [(0, [0xFF, 0x51, 0x03, 0x07, 0xA1, 0x20])], name: "Tempo")
     trackCount += 1
 
-    // One track per voice.
+    // One track per voice, tonal notes only. Channel-9 notes go to the shared
+    // percussion track below — kept per-voice they'd collide: channel 9 has no
+    // per-track note identity, so voice A's note-off would cut voice B's
+    // same-key drum short.
     for i in 0..<voiceCount {
         var events: [(Int, [UInt8])] = []
         events.append((0, [0xC0 | UInt8(i & 0x0F), programs[i]]))   // program change
-        for n in notes where n.voiceIndex == i {
+        for n in notes where n.voiceIndex == i && n.channel != 9 {
             let ch = UInt8(n.channel & 0x0F)
             events.append((tick(n.startFrame), [0x90 | ch, UInt8(n.key), UInt8(n.velocity)]))
             events.append((tick(n.endFrame),   [0x80 | ch, UInt8(n.key), 0]))
         }
         tracks += smfTrack(events: events, name: "Voice \(i + 1)")
+        trackCount += 1
+    }
+
+    // Shared percussion track: all voices' channel-9 notes, with overlapping
+    // same-key hits merged so no note-on is orphaned or cut short.
+    let percussion = mergedPercussion(notes.filter { $0.channel == 9 })
+    if !percussion.isEmpty {
+        var events: [(Int, [UInt8])] = []
+        for n in percussion {
+            events.append((tick(n.startFrame), [0x99, UInt8(n.key), UInt8(n.velocity)]))
+            events.append((tick(n.endFrame),   [0x89, UInt8(n.key), 0]))
+        }
+        tracks += smfTrack(events: events, name: "Percussion")
         trackCount += 1
     }
 
@@ -288,6 +305,24 @@ func buildSMF(notes: [TranscribedNote], voiceCount: Int,
     header += smfBE16(UInt16(trackCount))
     header += smfBE16(UInt16(ppq))            // division: ticks per quarter
     return header + tracks
+}
+
+/// Merges overlapping same-key percussion notes (from different voices) into
+/// single notes, so one voice's note-off can't cut another's drum hit short.
+/// Returns notes sorted by (key, start); order doesn't matter to the caller —
+/// `smfTrack` re-sorts events by tick.
+func mergedPercussion(_ notes: [TranscribedNote]) -> [TranscribedNote] {
+    var out: [TranscribedNote] = []
+    for n in notes.sorted(by: { ($0.key, $0.startFrame) < ($1.key, $1.startFrame) }) {
+        if var last = out.last, last.key == n.key, n.startFrame < last.endFrame {
+            last.endFrame = max(last.endFrame, n.endFrame)
+            last.velocity = max(last.velocity, n.velocity)
+            out[out.count - 1] = last
+        } else {
+            out.append(n)
+        }
+    }
+    return out
 }
 
 /// Serialises one MTrk chunk. Events are (absoluteTick, statusBytes); they're

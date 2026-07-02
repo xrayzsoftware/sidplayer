@@ -19,6 +19,22 @@ private final class AtomicBool: @unchecked Sendable {
     }
 }
 
+/// Same, for a Double. Carries the playback clock from the producer thread to
+/// the main actor without touching the C++ engine cross-thread.
+private final class AtomicDouble: @unchecked Sendable {
+    private let lock = OSAllocatedUnfairLock()
+    private var value: Double
+    init(_ initial: Double) { self.value = initial }
+    var get: Double {
+        lock.lock(); defer { lock.unlock() }
+        return value
+    }
+    func set(_ newValue: Double) {
+        lock.lock(); defer { lock.unlock() }
+        value = newValue
+    }
+}
+
 /// High-level playback controller. Wraps `SIDPlayerEngine` with:
 ///  - a producer thread that calls the SID emulator off the audio render thread
 ///  - an `AVAudioEngine` graph that drains a `RingBuffer` and feeds a `VizTap`
@@ -66,6 +82,8 @@ public final class SIDPlayer: @unchecked Sendable {
     private var producer: Thread?
     private let producerStop = AtomicBool(false)
     private let paused = AtomicBool(true)
+    /// Playback clock published by the producer thread (see `currentTime`).
+    private let timeLatch = AtomicDouble(0)
     private(set) var loadedPath: String?
 
     /// Emulation settings. Applied to all engines on the next load() or
@@ -102,18 +120,40 @@ public final class SIDPlayer: @unchecked Sendable {
     }
 
     public var info: TuneInfo? { engine.info }
-    public var currentTime: TimeInterval { engine.currentTime }
+    /// Playback clock. Read from a latch the producer thread publishes —
+    /// `engine.currentTime` reaches into the C++ engine, which must never be
+    /// touched while the producer thread is rendering. When the producer is
+    /// stopped (load/select/stop paths), `syncTimeLatch()` refreshes it.
+    public var currentTime: TimeInterval { timeLatch.get }
     public var currentSong: Int { engine.currentSong }
     public var isPlaying: Bool { !paused.get }
+
+    /// Refreshes the time latch straight from the engine. Only call while the
+    /// producer thread is stopped.
+    private func syncTimeLatch() {
+        timeLatch.set(engine.currentTime)
+    }
 
     public func load(path: String) throws {
         stopProducer()
         ring.clear()
-        loadedPath = path
         applyConfigToAllEngines()
-        try engine.load(path: path)
-        let start = engine.info?.startSong ?? 1
-        try engine.start(song: start, sampleRate: Int(sampleRate))
+        var start = 1
+        do {
+            try engine.load(path: path)
+            start = engine.info?.startSong ?? 1
+            try engine.start(song: start, sampleRate: Int(sampleRate))
+        } catch {
+            // The old tune is gone and no producer is running: reflect that in
+            // `isPlaying` instead of reporting a phantom "playing" state, and
+            // keep `loadedPath` pointing at the last *successful* load so a
+            // config-change reload can't resurrect the broken file.
+            paused.set(true)
+            syncTimeLatch()
+            throw error
+        }
+        loadedPath = path
+        syncTimeLatch()
 
         // Best-effort viz engine setup. Failures here are non-fatal — the
         // main audio path keeps working with empty voice taps.
@@ -140,6 +180,7 @@ public final class SIDPlayer: @unchecked Sendable {
     public func pause() {
         paused.set(true)
         stopProducer()
+        syncTimeLatch()
     }
 
     public func stop() {
@@ -155,6 +196,7 @@ public final class SIDPlayer: @unchecked Sendable {
             syncVoiceEngines(toSong: song)
         }
         ring.clear()
+        syncTimeLatch()
     }
 
     public func setVolume(_ v: Float) {
@@ -165,24 +207,27 @@ public final class SIDPlayer: @unchecked Sendable {
     public func nextSong() throws {
         stopProducer()
         ring.clear()
-        try engine.nextSong()
+        do { try engine.nextSong() } catch { paused.set(true); throw error }
         syncVoiceEngines(toSong: engine.currentSong)
+        syncTimeLatch()
         if !paused.get { startProducer() }
     }
 
     public func previousSong() throws {
         stopProducer()
         ring.clear()
-        try engine.previousSong()
+        do { try engine.previousSong() } catch { paused.set(true); throw error }
         syncVoiceEngines(toSong: engine.currentSong)
+        syncTimeLatch()
         if !paused.get { startProducer() }
     }
 
     public func select(song: Int) throws {
         stopProducer()
         ring.clear()
-        try engine.select(song: song)
+        do { try engine.select(song: song) } catch { paused.set(true); throw error }
         syncVoiceEngines(toSong: song)
+        syncTimeLatch()
         if !paused.get { startProducer() }
     }
 
@@ -195,13 +240,22 @@ public final class SIDPlayer: @unchecked Sendable {
         stopProducer()
         ring.clear()
         applyConfigToAllEngines()
-        try engine.load(path: path)
-        try engine.start(song: song, sampleRate: Int(sampleRate))
+        do {
+            try engine.load(path: path)
+            try engine.start(song: song, sampleRate: Int(sampleRate))
+        } catch {
+            // No producer is running and the tune failed to reload — make
+            // `isPlaying` truthful rather than reporting a silent stall.
+            paused.set(true)
+            syncTimeLatch()
+            throw error
+        }
         for (i, ve) in voiceEngines.enumerated() {
             try? ve.load(path: path)
             try? ve.start(song: song, sampleRate: Int(sampleRate))
             for v in 0..<3 { ve.setVoiceMuted(v, muted: v != i) }
         }
+        syncTimeLatch()
         if wasPlaying { try play() }
     }
 
@@ -287,7 +341,6 @@ public final class SIDPlayer: @unchecked Sendable {
     /// orphan a thread and race a freshly started one on the same engine.
     private func stopProducer() {
         producerStop.set(true)
-        producer?.cancel()
         while let t = producer, !t.isFinished {
             Thread.sleep(forTimeInterval: 0.005)
         }
@@ -313,6 +366,9 @@ public final class SIDPlayer: @unchecked Sendable {
                 Thread.sleep(forTimeInterval: 0.010)
                 continue
             }
+            // Publish the playback clock. The producer thread owns the engine
+            // while running, so this is the only thread that may read it.
+            timeLatch.set(engine.currentTime)
 
             // Drive voice engines for the same N samples, then fill voice taps
             // directly. Failures here are silently ignored — they're viz only,

@@ -142,6 +142,48 @@ final class SIDMIDIExporterTests: XCTestCase {
         XCTAssertEqual(tracker.notes[0].velocity, 127, "full sustain (15) maps to max velocity")
     }
 
+    // MARK: - Percussion merging
+
+    func testMergedPercussionJoinsOverlappingSameKeyHits() {
+        // Two voices hitting the same drum with overlapping spans: kept apart
+        // they'd share channel 9 and the first note-off would cut the second
+        // hit short. The merge must yield one union-span note.
+        let a = TranscribedNote(channel: 9, key: 36, velocity: 100,
+                                startFrame: 0, endFrame: 6, voiceIndex: 0)
+        let b = TranscribedNote(channel: 9, key: 36, velocity: 127,
+                                startFrame: 4, endFrame: 10, voiceIndex: 1)
+        let merged = mergedPercussion([a, b])
+        XCTAssertEqual(merged.count, 1)
+        XCTAssertEqual(merged[0].startFrame, 0)
+        XCTAssertEqual(merged[0].endFrame, 10, "merged note spans the union")
+        XCTAssertEqual(merged[0].velocity, 127, "loudest hit wins")
+    }
+
+    func testMergedPercussionKeepsDistinctHits() {
+        // Different keys, and same-key hits that don't overlap, stay separate.
+        let kick1 = TranscribedNote(channel: 9, key: 36, velocity: 100,
+                                    startFrame: 0, endFrame: 2, voiceIndex: 0)
+        let kick2 = TranscribedNote(channel: 9, key: 36, velocity: 100,
+                                    startFrame: 5, endFrame: 7, voiceIndex: 1)
+        let snare = TranscribedNote(channel: 9, key: 38, velocity: 100,
+                                    startFrame: 1, endFrame: 3, voiceIndex: 2)
+        XCTAssertEqual(mergedPercussion([kick1, kick2, snare]).count, 3)
+    }
+
+    func testPercussionNotesGetOwnSharedTrack() {
+        // One tonal voice + one drum → tempo + voice track + percussion track.
+        let notes = [
+            TranscribedNote(channel: 0, key: 69, velocity: 100,
+                            startFrame: 0, endFrame: 25, voiceIndex: 0),
+            TranscribedNote(channel: 9, key: 36, velocity: 100,
+                            startFrame: 0, endFrame: 5, voiceIndex: 0),
+        ]
+        let data = buildSMF(notes: notes, voiceCount: 1, programs: [80], playRateHz: 50)
+        let bytes = [UInt8](data)
+        XCTAssertEqual(Array(bytes[10..<12]), [0, 3], "MThd track count = 3")
+        XCTAssertEqual(occurrences(of: Array("MTrk".utf8), in: bytes), 3)
+    }
+
     // MARK: - SMF bytes
 
     func testSMFHeaderAndStructure() {
@@ -185,8 +227,9 @@ final class SIDMIDIExporterTests: XCTestCase {
 
         let bytes = [UInt8](try Data(contentsOf: dest))
         XCTAssertEqual(Array(bytes[0..<4]), Array("MThd".utf8), "must start with a MIDI header")
-        // 4 tracks: tempo + 3 voices.
-        XCTAssertEqual(occurrences(of: Array("MTrk".utf8), in: bytes), 4)
+        // 5 tracks: tempo + 3 voices + percussion (Commando's bass voice
+        // plays noise drums, which route to the shared percussion track).
+        XCTAssertEqual(occurrences(of: Array("MTrk".utf8), in: bytes), 5)
 
         // Count note-on events (0x9n status with non-zero velocity). A real tune
         // must yield some; zero would mean the register sampling never fired.

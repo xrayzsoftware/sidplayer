@@ -7,10 +7,14 @@ struct MiniPlayerView: View {
     @Environment(\.openWindow) private var openWindow
     @Environment(\.dismissWindow) private var dismissWindow
 
+    /// Cached catalog row for the playing tune. `body` re-evaluates ~10×/sec
+    /// while playing (it reads `state.currentTime`), and title/author only
+    /// change at track boundaries — don't hit SQLite on every tick.
+    @State private var row: TuneRow?
+
     var body: some View {
         @Bindable var state = state
         let theme = state.theme
-        let row = currentRow
         let hasTune = state.currentTuneID != nil
 
         VStack(spacing: 8) {
@@ -103,6 +107,9 @@ struct MiniPlayerView: View {
         .background(theme.windowBackground)
         .background(WindowTinter(color: theme.windowBackground, isDark: theme.isDark))
         .background(MiniPlayerWindowSetup())
+        .task(id: state.currentTuneID) {
+            row = state.currentTuneID.flatMap { try? state.catalog?.tune(id: $0) }
+        }
         .onAppear {
             // Give the window a chance to become key, then hide the main window.
             DispatchQueue.main.async {
@@ -126,11 +133,6 @@ struct MiniPlayerView: View {
             win.makeKeyAndOrderFront(nil)
         }
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    private var currentRow: TuneRow? {
-        guard let id = state.currentTuneID else { return nil }
-        return try? state.catalog?.tune(id: id)
     }
 
     private var currentLengthMs: Int {

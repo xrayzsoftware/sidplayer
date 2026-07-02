@@ -104,6 +104,18 @@ final class SIDRegistersTests: XCTestCase {
         XCTAssertFalse(r.voice3Off)
     }
 
+    /// The decoder's documented contract: any image length is safe, missing
+    /// bytes read as 0. `readRegisters` bridges from C++, so its buffer-size
+    /// contract could silently change — this pins the no-crash behaviour.
+    func testShortImageDecodesAsZeros() {
+        for img in [[UInt8](), [UInt8](repeating: 0xFF, count: 10)] {
+            let r = SIDRegisters(image: img)
+            XCTAssertEqual(r.voices.count, 3)
+            XCTAssertEqual(r.voices[2].frequency, 0, "bytes past the image read as 0")
+            XCTAssertEqual(r.volume, 0)
+        }
+    }
+
     /// Each voice's registers live 7 bytes apart; a bad stride would attribute
     /// one voice's state to another.
     func testThreeVoiceOffsets() {

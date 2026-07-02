@@ -132,7 +132,10 @@ struct PhosphorBurnView: View {
 
     var body: some View {
         let theme = state.theme
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+        // Paused while idle, like VectorscopeView — a 60 Hz bitmap burn with
+        // nothing playing is pure wasted CPU. The afterglow freezes at the
+        // pause instant, which reads as the CRT being switched off.
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: !state.isPlaying)) { timeline in
         Canvas { ctx, size in
             _ = timeline.date
 

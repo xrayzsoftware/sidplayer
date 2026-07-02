@@ -369,13 +369,20 @@ public final class CatalogDB: Sendable {
     /// or end with no trailing slash (e.g. `"MUSICIANS/H/Hubbard_Rob"`).
     public func browse(prefix: String) throws -> (dirs: [String], tunes: [TuneRow]) {
         let p = prefix.isEmpty ? "" : prefix + "/"
-        let likePattern = p + "%"
+        // LIKE treats '_' and '%' as wildcards, and HVSC directory names use
+        // underscores everywhere ("Hubbard_Rob") — escape them so a sibling
+        // like "HubbardXRob" can't leak into the wrong folder.
+        let escaped = p
+            .replacingOccurrences(of: "\\", with: "\\\\")
+            .replacingOccurrences(of: "%", with: "\\%")
+            .replacingOccurrences(of: "_", with: "\\_")
+        let likePattern = escaped + "%"
         let restStart = p.count + 1   // 1-indexed for SQLite substr()
         return try dbWriter.read { db in
             // Direct file rows: path under prefix with no further '/'.
             let tunes = try TuneRow.fetchAll(db, sql: """
                 SELECT * FROM tunes
-                WHERE path LIKE ?
+                WHERE path LIKE ? ESCAPE '\\'
                   AND instr(substr(path, ?), '/') = 0
                 ORDER BY path
             """, arguments: [likePattern, restStart])
@@ -385,7 +392,7 @@ public final class CatalogDB: Sendable {
             let dirs = try String.fetchAll(db, sql: """
                 SELECT DISTINCT substr(path, ?, instr(substr(path, ?), '/') - 1)
                 FROM tunes
-                WHERE path LIKE ?
+                WHERE path LIKE ? ESCAPE '\\'
                   AND instr(substr(path, ?), '/') > 0
             """, arguments: [restStart, restStart, likePattern, restStart])
 

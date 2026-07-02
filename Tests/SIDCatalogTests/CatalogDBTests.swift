@@ -55,6 +55,26 @@ final class CatalogDBTests: XCTestCase {
         XCTAssertEqual(lens.map(\.durationMs), [185_000, 55_000, 61_000])
     }
 
+    /// HVSC folder names use underscores ("Hubbard_Rob"), which SQLite LIKE
+    /// treats as a single-char wildcard — browse must escape it, or a sibling
+    /// folder differing only at the underscore leaks into the wrong listing.
+    func testBrowseTreatsUnderscoreAsLiteral() throws {
+        let db = try CatalogDB()
+        _ = try db.insert(tune: makeRow(path: "MUSICIANS/H/Hubbard_Rob/One.sid",
+                                        title: "One", author: "Rob"), lengths: [1000])
+        _ = try db.insert(tune: makeRow(path: "MUSICIANS/H/HubbardXRob/Two.sid",
+                                        title: "Two", author: "Imposter"), lengths: [1000])
+
+        let (dirs, tunes) = try db.browse(prefix: "MUSICIANS/H/Hubbard_Rob")
+        XCTAssertTrue(dirs.isEmpty)
+        XCTAssertEqual(tunes.map(\.path), ["MUSICIANS/H/Hubbard_Rob/One.sid"],
+                       "the wildcard '_' must not match HubbardXRob")
+
+        let (parentDirs, _) = try db.browse(prefix: "MUSICIANS/H")
+        XCTAssertEqual(parentDirs.sorted(), ["HubbardXRob", "Hubbard_Rob"],
+                       "both real folders still appear at the parent level")
+    }
+
     func testPlayCountsRankByCumulativePlays() throws {
         let db = try CatalogDB()
         let a = try db.insert(tune: makeRow(path: "a.sid", title: "A", author: "X"), lengths: [1000])

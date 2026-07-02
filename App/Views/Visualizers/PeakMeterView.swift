@@ -34,6 +34,12 @@ private final class PeakMeterState {
         }
     }
 
+    /// True once every bar and peak cap has decayed to zero — nothing left to
+    /// animate, so the timeline can pause.
+    var isSilent: Bool {
+        bandLevels.allSatisfy { $0 == 0 } && peakLevels.allSatisfy { $0 == 0 }
+    }
+
     /// Updates `bandLevels` (smoothed) and `peakLevels` (decaying caps).
     func tick(tap: VizTap) {
         guard let fft else { return }
@@ -79,16 +85,31 @@ struct PeakMeterView: View {
     @Environment(AppState.self) private var state
 
     @State private var meter = PeakMeterState()
+    /// Set once the post-pause decay animation has fully reached zero. Unlike
+    /// the sibling visualizers, this one can't pause the instant playback
+    /// stops — the bars would freeze mid-height instead of falling.
+    @State private var settled = false
 
     var body: some View {
         let theme = state.theme
-        TimelineView(.animation(minimumInterval: 1.0 / 60.0, paused: false)) { timeline in
+        TimelineView(.animation(minimumInterval: 1.0 / 60.0,
+                                paused: !state.isPlaying && settled)) { timeline in
         Canvas { ctx, size in
             _ = timeline.date
             if state.isPlaying {
                 meter.tick(tap: tap)
+                if settled {
+                    // Re-arm the decay for the next pause.
+                    DispatchQueue.main.async { settled = false }
+                }
             } else {
                 meter.decayToSilence()
+                if meter.isSilent && !settled {
+                    // Not a state mutation during view *update* — Canvas draw
+                    // closures run outside it — but defer to the next runloop
+                    // turn anyway so the redraw finishes cleanly.
+                    DispatchQueue.main.async { settled = true }
+                }
             }
 
             ctx.fill(Path(CGRect(origin: .zero, size: size)),

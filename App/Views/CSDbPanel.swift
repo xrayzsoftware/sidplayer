@@ -78,7 +78,10 @@ struct CSDbPanel: View {
         }
         .frame(width: 440, height: 480)
         .background(theme.windowBackground)
-        .task { await load() }
+        // id: path — auto-advance can change the track while the sheet is
+        // open; without the id the task never re-runs and the panel keeps
+        // showing the previous tune's releases.
+        .task(id: path) { await load() }
     }
 
     @ViewBuilder
