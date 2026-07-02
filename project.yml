@@ -44,8 +44,8 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSHumanReadableCopyright: ""
         NSPrincipalClass: "NSApplication"
-        CFBundleShortVersionString: "0.6"
-        CFBundleVersion: "6"
+        CFBundleShortVersionString: "0.7"
+        CFBundleVersion: "7"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sidplayer.app
