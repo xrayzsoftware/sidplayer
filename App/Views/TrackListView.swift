@@ -19,6 +19,7 @@ struct TrackListView: View {
             }
         )
 
+        ScrollViewReader { proxy in
         Table(state.sortedRows, selection: $state.selectedID, sortOrder: sortBinding) {
             TableColumn("") { (item: TuneItem) in
                 if state.currentTuneID == item.id {
@@ -73,6 +74,21 @@ struct TrackListView: View {
         }
         // Playback is driven by selectedID's didSet in AppState — no onChange
         // here, which would double-trigger play() on skip/auto-advance.
+        .onChange(of: state.currentTuneID) { _, id in
+            // Shuffle lands on a random spot in the list, so follow it. A
+            // manual pick is already on screen — don't yank the scroll
+            // position, hence the shuffle gate.
+            guard state.shuffleEnabled, let id else { return }
+            withAnimation { proxy.scrollTo(id, anchor: .center) }
+        }
+        .onAppear {
+            // Shuffle may have advanced while another tab was showing; land
+            // the returning view on the playing row. Deferred a tick so the
+            // Table has laid out before the scroll.
+            guard state.shuffleEnabled, let id = state.currentTuneID else { return }
+            DispatchQueue.main.async { proxy.scrollTo(id, anchor: .center) }
+        }
+        }
     }
 
     @ViewBuilder
