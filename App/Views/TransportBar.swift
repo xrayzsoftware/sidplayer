@@ -20,7 +20,7 @@ struct TransportBar: View {
                 Button { state.skipBackward() } label: {
                     Image(systemName: "backward.end.fill")
                 }
-                .help(state.subtuneCount > 1 ? "Previous subtune" : "Previous track")
+                .help("Previous track")
 
                 Button { state.togglePlayPause() } label: {
                     Image(systemName: state.isPlaying ? "pause.fill" : "play.fill")
@@ -31,7 +31,7 @@ struct TransportBar: View {
                 Button { state.skipForward() } label: {
                     Image(systemName: "forward.end.fill")
                 }
-                .help(state.subtuneCount > 1 ? "Next subtune" : "Next track")
+                .help("Next track")
             }
             .buttonStyle(.bordered)
             .controlSize(.small)
@@ -48,9 +48,27 @@ struct TransportBar: View {
                 : "Repeat one")
 
             if state.subtuneCount > 1 {
-                Text("sub \(state.currentSubtune)/\(state.subtuneCount)")
-                    .font(.system(size: 11, weight: .medium, design: .monospaced))
-                    .foregroundStyle(state.theme.textSecondary)
+                HStack(spacing: 3) {
+                    Button { state.previousSubtune() } label: {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(state.theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Previous subtune")
+
+                    Text("sub \(state.currentSubtune)/\(state.subtuneCount)")
+                        .font(.system(size: 11, weight: .medium, design: .monospaced))
+                        .foregroundStyle(state.theme.textSecondary)
+
+                    Button { state.nextSubtune() } label: {
+                        Image(systemName: "chevron.right")
+                            .font(.system(size: 9, weight: .semibold))
+                            .foregroundStyle(state.theme.textSecondary)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Next subtune")
+                }
             }
 
             Spacer()

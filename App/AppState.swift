@@ -805,20 +805,14 @@ public final class AppState {
         nowPlaying.clear()
     }
 
+    // Next/Prev always move between tracks; subtunes have their own controls
+    // (nextSubtune/previousSubtune, the ‹ › stepper in TransportBar).
     public func skipForward() {
-        if subtuneCount > 1 {
-            switchSubtune { try player.nextSong() }
-        } else {
-            jumpToAdjacentTrack(offset: +1)
-        }
+        jumpToAdjacentTrack(offset: +1)
     }
 
     public func skipBackward() {
-        if subtuneCount > 1 {
-            switchSubtune { try player.previousSong() }
-        } else {
-            jumpToAdjacentTrack(offset: -1)
-        }
+        jumpToAdjacentTrack(offset: -1)
     }
 
     /// Runs a subtune-switch on the player, surfacing failure instead of
@@ -923,6 +917,8 @@ public final class AppState {
 
     /// Auto-advance when the current subtune reaches its songlength entry.
     /// Subtune ends → next subtune. Last subtune ends → next track.
+    /// Shuffle skips the subtune walk entirely — one subtune plays, then a
+    /// fresh random tune; otherwise a long multi-subtune tune pins the shuffle.
     private func checkAutoAdvance() {
         guard isPlaying else { return }
         let subIdx = max(0, currentSubtune - 1)
@@ -931,7 +927,7 @@ public final class AppState {
         guard lenMs > 0 else { return }
         guard currentTime * 1000 >= Double(lenMs) else { return }
 
-        if currentSubtune < subtuneCount {
+        if !shuffleEnabled && currentSubtune < subtuneCount {
             switchSubtune { try player.nextSong() }
             currentTime = 0
         } else if repeatMode == .one, let id = currentTuneID {
