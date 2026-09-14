@@ -119,19 +119,32 @@ struct MiniPlayerView: View {
         .onDisappear { MiniPlayerView.showMainWindow() }
     }
 
+    /// Windows hidden by hideMainWindow(), so showMainWindow() restores only
+    /// those — not every window the app has ever had (a closed ⌘N window is
+    /// still in NSApp.windows and used to be resurrected).
+    private static let hiddenWindows = NSHashTable<NSWindow>.weakObjects()
+
     static func hideMainWindow() {
         for win in NSApp.windows {
             guard win.isVisible,
                   !(win is NSPanel),
                   win.identifier?.rawValue != "mini-player" else { continue }
+            hiddenWindows.add(win)
             win.orderOut(nil)
         }
     }
 
     static func showMainWindow() {
-        for win in NSApp.windows where win.identifier?.rawValue != "mini-player" && !(win is NSPanel) {
-            win.makeKeyAndOrderFront(nil)
+        var restored = hiddenWindows.allObjects
+        hiddenWindows.removeAllObjects()
+        if restored.isEmpty {
+            // Nothing recorded (e.g. the main window was already closed):
+            // best effort so the app isn't left with no window at all.
+            restored = NSApp.windows.filter {
+                $0.identifier?.rawValue != "mini-player" && !($0 is NSPanel)
+            }
         }
+        for win in restored { win.makeKeyAndOrderFront(nil) }
         NSApp.activate(ignoringOtherApps: true)
     }
 

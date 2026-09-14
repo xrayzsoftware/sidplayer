@@ -194,9 +194,21 @@ actor CSDbService {
         return cacheDir.appendingPathComponent(name + ".json")
     }
 
+    /// Negative entries expire: a "not on CSDb" verdict can come from a
+    /// throttle/maintenance page served with a 200, and those used to be
+    /// cached forever (the reason the cache dir has been bumped twice).
+    private static let negativeTTL: TimeInterval = 7 * 24 * 3600
+
     private func loadCache(_ key: String) -> CSDbEntry? {
-        guard let data = try? Data(contentsOf: cacheURL(key)) else { return nil }
-        return try? JSONDecoder().decode(CSDbEntry.self, from: data)
+        let url = cacheURL(key)
+        guard let data = try? Data(contentsOf: url),
+              let entry = try? JSONDecoder().decode(CSDbEntry.self, from: data) else { return nil }
+        if !entry.found,
+           let mtime = (try? url.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate,
+           Date().timeIntervalSince(mtime) > Self.negativeTTL {
+            return nil
+        }
+        return entry
     }
 
     private func saveCache(_ key: String, _ entry: CSDbEntry) {

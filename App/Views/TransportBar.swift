@@ -69,6 +69,7 @@ struct TransportBar: View {
                     .buttonStyle(.plain)
                     .help("Next subtune")
                 }
+                .disabled(state.isStopped)
             }
 
             Spacer()

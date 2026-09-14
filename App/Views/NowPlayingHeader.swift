@@ -5,11 +5,11 @@ struct NowPlayingHeader: View {
     @Environment(AppState.self) private var state
     @Environment(\.openWindow) private var openWindow
     @State private var showCSDb = false
+    /// Cached catalog row for the playing tune; `body` re-runs on every
+    /// subtune/theme/toggle change and must not hit SQLite each time.
+    @State private var row: TuneRow?
 
     var body: some View {
-        let row: TuneRow? = state.currentTuneID.flatMap { id in
-            try? state.catalog?.tune(id: id)
-        }
         HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 2) {
                 Text(row?.title ?? "—")
@@ -45,11 +45,10 @@ struct NowPlayingHeader: View {
 
             HStack(spacing: 14) {
                 Button {
+                    // MiniPlayerView.onAppear hides the main window; a second
+                    // delayed hide here could fire after the mini player had
+                    // already closed and leave the app with no windows.
                     openWindow(id: "mini-player")
-                    // Delay so the mini player window appears and gets tagged first.
-                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.1) {
-                        MiniPlayerView.hideMainWindow()
-                    }
                 } label: {
                     Image(systemName: "rectangle.inset.filled")
                         .font(.system(size: 16))
@@ -101,6 +100,9 @@ struct NowPlayingHeader: View {
         .sheet(isPresented: $showCSDb) {
             CSDbPanel(path: row?.path ?? "", title: row?.title)
                 .environment(state)
+        }
+        .task(id: state.currentTuneID) {
+            row = state.currentTuneID.flatMap { try? state.catalog?.tune(id: $0) }
         }
     }
 

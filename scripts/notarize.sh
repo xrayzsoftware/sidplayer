@@ -29,8 +29,10 @@ DMG_PATH="${BUILD_DIR}/${APP_NAME}.dmg"
 NOTARY_PROFILE="${NOTARY_PROFILE:-sidplayer-notary}"
 
 # --- Resolve the Developer ID Application signing identity -------------------
+# `|| true` keeps `set -e` from killing the script inside the substitution
+# when grep finds nothing, so the guard below can print its help.
 DEV_ID="${DEV_ID:-$(security find-identity -v -p codesigning 2>/dev/null \
-    | grep -m1 'Developer ID Application' | sed -E 's/.*"(.*)".*/\1/')}"
+    | grep -m1 'Developer ID Application' | sed -E 's/.*"(.*)".*/\1/' || true)}"
 
 if [[ -z "${DEV_ID}" ]]; then
     echo "✗ No 'Developer ID Application' identity found in your keychain."

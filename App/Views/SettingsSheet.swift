@@ -5,6 +5,9 @@ import SIDEngine
 struct SettingsSheet: View {
     @Environment(AppState.self) private var state
     @Environment(\.dismiss) private var dismiss
+    /// Cached COUNT(*): reading it in `body` re-ran a blocking query on
+    /// every indexer progress tick.
+    @State private var tuneCount = 0
 
     var body: some View {
         let theme = state.theme
@@ -82,7 +85,7 @@ struct SettingsSheet: View {
                 Text("Catalog")
                     .font(.caption)
                     .foregroundStyle(theme.textSecondary)
-                Text("\((try? state.catalog?.count()) ?? 0) tunes indexed")
+                Text("\(tuneCount) tunes indexed")
                     .font(.callout)
                     .foregroundStyle(theme.textPrimary)
             }
@@ -98,6 +101,10 @@ struct SettingsSheet: View {
         .padding(20)
         .frame(width: 520)
         .background(theme.windowBackground)
+        // Re-read when a download/index finishes, not on every progress tick.
+        .task(id: state.isBusy) {
+            tuneCount = (try? state.catalog?.count()) ?? 0
+        }
     }
 
     private struct EmulationSection: View {

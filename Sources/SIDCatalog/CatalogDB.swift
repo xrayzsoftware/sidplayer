@@ -297,6 +297,17 @@ public final class CatalogDB: Sendable {
         if let existing = try TuneRow.filter(Column("path") == t.path).fetchOne(db),
            let id = existing.id {
             t.id = id
+            // Skip untouched rows: every UPDATE fires the FTS5 sync trigger
+            // (delete + re-insert of the document), so a no-op re-index used
+            // to rewrite all ~60k FTS documents.
+            if existing == t {
+                let existingLengths = try LengthRow
+                    .filter(Column("tuneId") == id)
+                    .order(Column("subtune"))
+                    .fetchAll(db)
+                    .map(\.durationMs)
+                if existingLengths == lengths { return id }
+            }
             try t.update(db)
             try LengthRow.filter(Column("tuneId") == id).deleteAll(db)
             for (i, ms) in lengths.enumerated() {

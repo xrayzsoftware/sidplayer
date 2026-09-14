@@ -175,7 +175,11 @@ struct CSDbPanel: View {
 
     private func load() async {
         loading = true
-        entry = await state.csdb?.entry(forHVSCPath: path, title: title)
+        let result = await state.csdb?.entry(forHVSCPath: path, title: title)
+        // `.task(id: path)` cancelled us if the tune changed mid-fetch; don't
+        // overwrite the newer lookup's state with this one's.
+        guard !Task.isCancelled else { return }
+        entry = result
         loading = false
     }
 }

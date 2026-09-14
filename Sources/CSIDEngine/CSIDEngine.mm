@@ -43,6 +43,14 @@
     return (m && *m) ? @(m) : nil;
 }
 
+/// PSID/RSID header strings are ISO-8859-1, not UTF-8. `@(cstr)` goes through
+/// stringWithUTF8String: and returns nil for any byte >= 0x80 (e.g. "Jörg"),
+/// which made the engine's author disagree with the catalog's PSIDHeader parse.
+static NSString *latin1(const char *s) {
+    if (!s) return nil;
+    return [[NSString alloc] initWithCString:s encoding:NSISOLatin1StringEncoding];
+}
+
 static NSError *makeError(NSString *msg) {
     return [NSError errorWithDomain:@"CSIDEngine"
                                code:1
@@ -98,9 +106,9 @@ static NSError *makeError(NSString *msg) {
 
     CSIDTuneInfo *out = [CSIDTuneInfo new];
     unsigned ns = ti->numberOfInfoStrings();
-    if (ns >= 1 && ti->infoString(0)) out.title    = @(ti->infoString(0));
-    if (ns >= 2 && ti->infoString(1)) out.author   = @(ti->infoString(1));
-    if (ns >= 3 && ti->infoString(2)) out.released = @(ti->infoString(2));
+    if (ns >= 1) out.title    = latin1(ti->infoString(0));
+    if (ns >= 2) out.author   = latin1(ti->infoString(1));
+    if (ns >= 3) out.released = latin1(ti->infoString(2));
     if (ti->formatString())            out.format  = @(ti->formatString());
 
     out.songCount = ti->songs();
@@ -132,7 +140,9 @@ static NSError *makeError(NSString *msg) {
         return NO;
     }
 
-    _tune->selectSong((unsigned)songNum);
+    // selectSong clamps (0 or > songs → startSong) and returns the song that
+    // is actually active; store that, not the request, or currentSong lies.
+    songNum = (NSInteger)_tune->selectSong((unsigned)songNum);
 
     // (Re)create the SID emulation builder for the selected engine. The
     // previous builder stays alive until engine->config() below has released

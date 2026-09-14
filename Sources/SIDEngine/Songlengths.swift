@@ -66,6 +66,9 @@ public struct Songlengths: Sendable {
         let dot = rest.firstIndex(of: ".")
         let secsStr = dot.map { rest[..<$0] } ?? rest[...]
         guard let secs = Int(secsStr) else { return nil }
+        // Bound the fields so a corrupt line can't overflow Int and trap the
+        // indexer; anything past a day is not a real songlength.
+        guard (0...1440).contains(mins), (0...59).contains(secs) else { return nil }
         var ms = (mins * 60 + secs) * 1000
         if let d = dot {
             let frac = rest[rest.index(after: d)...]

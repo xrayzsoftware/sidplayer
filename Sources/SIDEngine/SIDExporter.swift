@@ -21,6 +21,7 @@ public func exportSIDToWAV(
     config: EmulationConfig,
     to destination: URL
 ) throws {
+    guard durationMs > 0, sampleRate > 0 else { throw ExportError.zeroDuration }
     let totalSamples = Int(Double(durationMs) / 1000.0 * Double(sampleRate))
     guard totalSamples > 0 else { throw ExportError.zeroDuration }
 

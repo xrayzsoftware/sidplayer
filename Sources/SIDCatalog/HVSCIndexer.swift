@@ -116,6 +116,7 @@ public actor HVSCIndexer {
                     currentPath: url.lastPathComponent
                 ))
                 await Task.yield()
+                try Task.checkCancellation()
             }
         }
         try flush()

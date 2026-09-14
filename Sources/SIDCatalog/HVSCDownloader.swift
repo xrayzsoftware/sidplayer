@@ -99,7 +99,10 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
             var entries = try SevenZipContainer.open(container: archiveData)
             // Consume from the end so each entry's payload is released as
             // soon as it has been written.
+            var n = 0
             while let entry = entries.popLast() {
+                n += 1
+                if n % 500 == 0 { try Task.checkCancellation() }
                 try Self.extract(entry: entry, into: staging)
             }
         } catch let err as HVSCError {
@@ -187,9 +190,17 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
         let session = URLSession(configuration: .ephemeral, delegate: delegate, delegateQueue: nil)
         defer { session.finishTasksAndInvalidate() }
 
-        try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-            delegate.continuation = cont
-            session.downloadTask(with: url).resume()
+        // Cancelling the surrounding Task cancels the URL task, which then
+        // completes with an error and resumes the continuation; without this
+        // a cancelled download would hang the continuation forever.
+        let task = session.downloadTask(with: url)
+        try await withTaskCancellationHandler {
+            try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
+                delegate.continuation = cont
+                task.resume()
+            }
+        } onCancel: {
+            task.cancel()
         }
     }
 }

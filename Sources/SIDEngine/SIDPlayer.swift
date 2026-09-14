@@ -119,7 +119,10 @@ public final class SIDPlayer: @unchecked Sendable {
         }
     }
 
-    public var info: TuneInfo? { engine.info }
+    /// Snapshot taken in load()/reloadCurrentTune() while the producer is
+    /// stopped. `engine.info` reaches into the C++ tune (and re-hashes it), so
+    /// it must never be read while the producer thread is rendering.
+    public private(set) var info: TuneInfo?
     /// Playback clock. Read from a latch the producer thread publishes —
     /// `engine.currentTime` reaches into the C++ engine, which must never be
     /// touched while the producer thread is rendering. When the producer is
@@ -139,9 +142,11 @@ public final class SIDPlayer: @unchecked Sendable {
         ring.clear()
         applyConfigToAllEngines()
         var start = 1
+        let loadedInfo: TuneInfo?
         do {
             try engine.load(path: path)
-            start = engine.info?.startSong ?? 1
+            loadedInfo = engine.info
+            start = loadedInfo?.startSong ?? 1
             try engine.start(song: start, sampleRate: Int(sampleRate))
         } catch {
             // The old tune is gone and no producer is running: reflect that in
@@ -149,10 +154,12 @@ public final class SIDPlayer: @unchecked Sendable {
             // keep `loadedPath` pointing at the last *successful* load so a
             // config-change reload can't resurrect the broken file.
             paused.set(true)
+            info = nil
             syncTimeLatch()
             throw error
         }
         loadedPath = path
+        info = loadedInfo
         syncTimeLatch()
 
         // Best-effort viz engine setup. Failures here are non-fatal — the
@@ -169,12 +176,35 @@ public final class SIDPlayer: @unchecked Sendable {
     }
 
     public func play() throws {
-        if av.isRunning == false {
-            try installSourceNodeIfNeeded()
-            try av.start()
-        }
+        let needsStart = !av.isRunning
+        if needsStart { try installSourceNodeIfNeeded() }
         paused.set(false)
         startProducer()
+        // The ring was cleared by load()/stop(); give the producer a moment
+        // to fill it before the render callback starts pulling, otherwise the
+        // first buffers are zero-filled — a silence gap plus a discontinuity
+        // at every start. (When the engine is already running, e.g. a track
+        // change, the render thread is pulling during this wait; that gap
+        // sits on a track boundary and is expected.)
+        primeRing()
+        if needsStart {
+            do {
+                try av.start()
+            } catch {
+                paused.set(true)
+                stopProducer()
+                throw error
+            }
+        }
+    }
+
+    /// Bounded wait for the producer to buffer at least half a ring.
+    private func primeRing() {
+        let target = min(2048, ringCapacity / 2)
+        let deadline = Date().addingTimeInterval(0.1)
+        while ring.available < target, Date() < deadline, !producerStop.get {
+            Thread.sleep(forTimeInterval: 0.002)
+        }
     }
 
     public func pause() {
@@ -247,9 +277,11 @@ public final class SIDPlayer: @unchecked Sendable {
             // No producer is running and the tune failed to reload — make
             // `isPlaying` truthful rather than reporting a silent stall.
             paused.set(true)
+            info = nil
             syncTimeLatch()
             throw error
         }
+        info = engine.info
         for (i, ve) in voiceEngines.enumerated() {
             try? ve.load(path: path)
             try? ve.start(song: song, sampleRate: Int(sampleRate))

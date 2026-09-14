@@ -226,7 +226,10 @@ public final class SIDPlayerEngine {
         if raw < 3.0 { return 2 }
         if raw < 6.0 { return 4 }
         if raw < 12.0 { return 8 }
-        return Int(raw.rounded())
+        // Digi/sample players program CIA timers in the kHz range; treating
+        // that as a play-rate multiplier makes the MIDI exporter iterate
+        // millions of frames. Nothing musical runs faster than 16× frame rate.
+        return min(Int(raw.rounded()), 16)
     }
 
     public func stop() {

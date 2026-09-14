@@ -398,6 +398,8 @@ public final class AppState {
                 try player.reloadCurrentTune()
             } catch {
                 lastError = error.localizedDescription
+                // reloadCurrentTune leaves the engine stopped on failure.
+                isPlaying = player.isPlaying
             }
         }
     }
@@ -798,8 +800,14 @@ public final class AppState {
             lastError = error.localizedDescription
             // A failed load/play leaves the player stopped (SIDPlayer restores
             // its paused flag on error) — mirror that instead of leaving the
-            // old track marked "playing" over silence.
+            // old track marked "playing" over silence. The previous tune has
+            // been unloaded too, so stop describing it as current.
             isPlaying = player.isPlaying
+            if !isPlaying {
+                currentTuneID = nil
+                subtuneCount = 1
+                nowPlaying.clear()
+            }
         }
     }
 
@@ -809,6 +817,9 @@ public final class AppState {
             isPlaying = false
             nowPlaying.setPlaying(false, elapsedSec: currentTime)
         } else {
+            // Nothing loaded: player.play() would spin up the audio engine and
+            // producer thread over silence and show a pause icon.
+            guard currentTuneID != nil else { return }
             do {
                 try player.play()
                 isPlaying = true
@@ -853,6 +864,9 @@ public final class AppState {
     /// (see SIDPlayer), so `isPlaying` must follow or the UI would show
     /// "playing" over silence.
     private func switchSubtune(_ op: () throws -> Void) {
+        // After stop() there is no session to step within; refreshing would
+        // republish the cleared Now Playing entry as "paused".
+        guard !isStopped else { return }
         do {
             try op()
         } catch {
@@ -860,6 +874,9 @@ public final class AppState {
             isPlaying = player.isPlaying
         }
         currentSubtune = player.currentSong
+        // The engine clock restarted; publish 0 now rather than the previous
+        // subtune's elapsed time against the new subtune's duration.
+        currentTime = 0
         refreshNowPlaying()
     }
 
@@ -869,7 +886,9 @@ public final class AppState {
     /// `checkAutoAdvance`).
     private func jumpToAdjacentTrack(offset: Int) {
         let list = playQueue
-        guard let id = currentTuneID, !list.isEmpty else { return }
+        // Fall back to the selected row when nothing is current — e.g. the
+        // user picked a missing file, so Next should still move past it.
+        guard let id = currentTuneID ?? selectedID, !list.isEmpty else { return }
 
         let target: Int64
 
@@ -934,6 +953,10 @@ public final class AppState {
         switchSubtune { try player.previousSong() }
     }
 
+    /// True after stop() (or before anything has played): no playback session
+    /// exists, so subtune stepping and Now Playing updates are meaningless.
+    public var isStopped: Bool { ticker == nil }
+
     private func startTicker() {
         ticker?.cancel()
         ticker = Task { [weak self] in
@@ -963,7 +986,6 @@ public final class AppState {
 
         if (!shuffleEnabled || repeatMode == .one) && currentSubtune < subtuneCount {
             switchSubtune { try player.nextSong() }
-            currentTime = 0
         } else if repeatMode == .one, let id = currentTuneID {
             Task { await play(tuneID: id) }
         } else {
