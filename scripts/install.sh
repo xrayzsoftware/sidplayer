@@ -27,8 +27,7 @@ xcodebuild \
 
 # Locate the built .app under DerivedData.
 BUILT_APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
-    -path "*Release*SID Player.app" -type d 2>/dev/null \
-    | head -1)
+    -path "*Release*SID Player.app" -type d -print -quit 2>/dev/null)
 
 if [[ -z "${BUILT_APP}" ]]; then
     echo "✗ Couldn't find the built .app under DerivedData."

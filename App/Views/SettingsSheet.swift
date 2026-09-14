@@ -37,11 +37,12 @@ struct SettingsSheet: View {
                     chooseFolder()
                 }
                 Button("Re-index") {
-                    Task { try? await state.reindex() }
+                    Task { await state.reindex() }
                 }
                 .disabled(state.hvscSource == nil)
             }
             .controlSize(.regular)
+            .disabled(state.isBusy)
 
             switch state.bootstrap {
             case .downloadingHVSC(let progress, let label):

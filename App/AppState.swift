@@ -17,6 +17,15 @@ public final class AppState {
         case indexing(processed: Int, total: Int?)
         case error(String)
     }
+    /// True while a download or index is in flight. Gates the Settings /
+    /// first-run buttons and the entry points themselves so two extractors
+    /// or indexers can't run into the same folder / database.
+    public var isBusy: Bool {
+        switch bootstrap {
+        case .downloadingHVSC, .indexing: return true
+        default: return false
+        }
+    }
     public var bootstrap: BootstrapStatus = .notReady
     public var showSettingsSheet: Bool = false
     public var lastError: String?
@@ -528,7 +537,14 @@ public final class AppState {
 
     // MARK: Lifecycle
 
+    private var didBootstrap = false
+
     public func bootstrap() async {
+        // Attached via `.task` on ContentView inside a WindowGroup, so it runs
+        // once per window; ⌘N must not open a second DB pool / CSDb service or
+        // leak another security-scope retain.
+        guard !didBootstrap else { return }
+        didBootstrap = true
         let support = supportDir()
         let dbURL  = support.appendingPathComponent("catalog.sqlite")
         let hvsc   = support.appendingPathComponent("hvsc", isDirectory: true)
@@ -582,6 +598,7 @@ public final class AppState {
     // MARK: HVSC download + index
 
     public func downloadHVSC() async {
+        guard !isBusy else { return }
         let dest = supportDir().appendingPathComponent("hvsc", isDirectory: true)
         bootstrap = .downloadingHVSC(progress: 0, label: "discovering manifest…")
         do {
@@ -614,23 +631,29 @@ public final class AppState {
                 }
             }
             self.hvscSource = result.source
-            try await reindex()
+            await reindex()
         } catch {
             bootstrap = .error("HVSC download failed: \(error.localizedDescription)")
         }
     }
 
-    public func reindex() async throws {
-        guard let source = hvscSource, let db = catalog else { return }
+    public func reindex() async {
+        guard !isBusy, let source = hvscSource, let db = catalog else { return }
         bootstrap = .indexing(processed: 0, total: nil)
-        let indexer = HVSCIndexer()
-        _ = try await indexer.reindex(source: source, into: db) { p in
-            Task { @MainActor in
-                self.bootstrap = .indexing(processed: p.processed, total: p.total)
+        do {
+            let indexer = HVSCIndexer()
+            _ = try await indexer.reindex(source: source, into: db) { p in
+                Task { @MainActor in
+                    self.bootstrap = .indexing(processed: p.processed, total: p.total)
+                }
             }
+            bootstrap = .ready
+            try await refreshSearch()
+        } catch {
+            // Owned here rather than by callers: a moved/renamed HVSC folder
+            // used to leave `bootstrap` stuck at .indexing forever.
+            bootstrap = .error("Re-index failed: \(error.localizedDescription)")
         }
-        bootstrap = .ready
-        try await refreshSearch()
     }
 
     public func setHVSCFolder(_ url: URL) async {
@@ -644,7 +667,7 @@ public final class AppState {
             HVSCBookmark.save(url)
             hvscSource = candidate
             if let oldRoot, oldRoot != url { HVSCBookmark.release(oldRoot) }
-            try await reindex()
+            await reindex()
         } catch {
             bootstrap = .error(error.localizedDescription)
         }
@@ -697,7 +720,9 @@ public final class AppState {
             let (dirs, tunes) = try db.browse(prefix: browsePath)
             self.browseDirs = dirs
             self.rows = tunes.compactMap(TuneItem.init(row:))
-            applySort()
+            // BrowseView renders `rows` in path order (no Table sort), so the
+            // play queue snapshot must match it or Next jumps off-screen.
+            self.sortedRows = self.rows
 
         case .recentlyPlayed:
             let results = try db.recentlyPlayed(limit: 200)
@@ -782,6 +807,7 @@ public final class AppState {
         if isPlaying {
             player.pause()
             isPlaying = false
+            nowPlaying.setPlaying(false, elapsedSec: currentTime)
         } else {
             do {
                 try player.play()
@@ -792,8 +818,12 @@ public final class AppState {
                 lastError = error.localizedDescription
                 isPlaying = false
             }
+            // Resume may follow stop(), which cancelled the ticker and cleared
+            // Now Playing; only play(tuneID:) started them before, so Play
+            // after Stop ran with a frozen clock and an empty Control Center.
+            if isPlaying { startTicker() }
+            refreshNowPlaying()
         }
-        nowPlaying.setPlaying(isPlaying, elapsedSec: currentTime)
     }
 
     public func stop() {
@@ -803,6 +833,9 @@ public final class AppState {
         ticker?.cancel()
         ticker = nil
         nowPlaying.clear()
+        // selectedID's didSet ignores same-value sets, so a stopped row
+        // couldn't be restarted by clicking it until another row was chosen.
+        selectedID = nil
     }
 
     // Next/Prev always move between tracks; subtunes have their own controls
@@ -862,9 +895,9 @@ public final class AppState {
                     // Repeat-all: start a fresh pass, avoid replaying current.
                     shufflePlayed = [id]
                     shuffleHistory = [id]
-                    let fresh = list.filter { $0 != id }
-                    guard let pick = fresh.randomElement() else { stop(); return }
-                    target = pick
+                    // A one-track queue has nothing else to pick; replay it,
+                    // matching sequential repeat-all's wrap.
+                    target = list.filter { $0 != id }.randomElement() ?? id
                 } else {
                     target = candidates.randomElement()!
                 }
@@ -919,6 +952,7 @@ public final class AppState {
     /// Subtune ends → next subtune. Last subtune ends → next track.
     /// Shuffle skips the subtune walk entirely — one subtune plays, then a
     /// fresh random tune; otherwise a long multi-subtune tune pins the shuffle.
+    /// Repeat-one already pins the tune, so it walks subtunes even under shuffle.
     private func checkAutoAdvance() {
         guard isPlaying else { return }
         let subIdx = max(0, currentSubtune - 1)
@@ -927,7 +961,7 @@ public final class AppState {
         guard lenMs > 0 else { return }
         guard currentTime * 1000 >= Double(lenMs) else { return }
 
-        if !shuffleEnabled && currentSubtune < subtuneCount {
+        if (!shuffleEnabled || repeatMode == .one) && currentSubtune < subtuneCount {
             switchSubtune { try player.nextSong() }
             currentTime = 0
         } else if repeatMode == .one, let id = currentTuneID {

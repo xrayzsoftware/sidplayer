@@ -78,20 +78,29 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
         )
 
         // 2. Extract via SWCompression's pure-Swift 7z reader. The whole 7z
-        // is loaded into memory (≈250 MB for current HVSC), then each entry's
-        // payload is decompressed lazily inside `SevenZipContainer.open`.
+        // is mapped into memory (≈250 MB for current HVSC) and
+        // `SevenZipContainer.open` decompresses *every* entry's payload up
+        // front (≈450 MB; the library has no per-entry API for solid
+        // archives), so peak memory is roughly archive + extracted size.
         // Sandbox-safe — no Process spawn.
+        //
+        // Extract into a sibling staging dir and swap it in only after the
+        // tree validates, so a failure part-way (OOM kill, disk full, corrupt
+        // archive) doesn't destroy an existing install.
         progress?(.init(kind: .extracting))
-        if fm.fileExists(atPath: destination.path) {
-            try fm.removeItem(at: destination)
-        }
-        try fm.createDirectory(at: destination, withIntermediateDirectories: true)
+        let staging = destination.deletingLastPathComponent()
+            .appendingPathComponent(destination.lastPathComponent + ".partial", isDirectory: true)
+        if fm.fileExists(atPath: staging.path) { try fm.removeItem(at: staging) }
+        try fm.createDirectory(at: staging, withIntermediateDirectories: true)
+        defer { try? fm.removeItem(at: staging) }
 
         do {
             let archiveData = try Data(contentsOf: tmp, options: [.mappedIfSafe])
-            let entries = try SevenZipContainer.open(container: archiveData)
-            for entry in entries {
-                try Self.extract(entry: entry, into: destination)
+            var entries = try SevenZipContainer.open(container: archiveData)
+            // Consume from the end so each entry's payload is released as
+            // soon as it has been written.
+            while let entry = entries.popLast() {
+                try Self.extract(entry: entry, into: staging)
             }
         } catch let err as HVSCError {
             throw err
@@ -100,8 +109,19 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
         }
 
         // 3. Locate the C64Music root inside the extracted tree (HVSC archives
-        // wrap content in a single top-level dir, name varies by release).
-        let root = try Self.locateHVSCRoot(under: destination)
+        // wrap content in a single top-level dir, name varies by release) and
+        // validate it before touching the existing install.
+        let stagedRoot = try Self.locateHVSCRoot(under: staging)
+        try HVSCSource(root: stagedRoot).validate()
+
+        // 4. Swap the staged tree into place.
+        if fm.fileExists(atPath: destination.path) {
+            try fm.removeItem(at: destination)
+        }
+        try fm.moveItem(at: staging, to: destination)
+        let root = stagedRoot == staging
+            ? destination
+            : destination.appendingPathComponent(stagedRoot.lastPathComponent, isDirectory: true)
         let source = HVSCSource(root: root)
         try source.validate()
 

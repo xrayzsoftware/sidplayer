@@ -55,7 +55,7 @@ xcodebuild \
     | tail -3
 
 BUILT_APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
-    -path "*Release*${APP_NAME}.app" -type d 2>/dev/null | head -1)
+    -path "*Release*${APP_NAME}.app" -type d -print -quit 2>/dev/null)
 if [[ -z "${BUILT_APP}" ]]; then
     echo "✗ Couldn't find the built .app under DerivedData."
     exit 1

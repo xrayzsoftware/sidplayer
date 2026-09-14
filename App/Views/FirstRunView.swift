@@ -46,20 +46,27 @@ struct FirstRunView: View {
                     .font(.system(size: 11))
                     .multilineTextAlignment(.center)
                     .frame(maxWidth: 360)
+                // Keep the actions available so a failed download can be
+                // retried without relaunching.
+                actionButtons
             default:
-                HStack(spacing: 8) {
-                    Button("Download HVSC (~640 MB)") {
-                        Task { await state.downloadHVSC() }
-                    }
-                    .keyboardShortcut(.defaultAction)
-
-                    Button("Choose Folder…") {
-                        chooseFolder()
-                    }
-                }
+                actionButtons
             }
         }
         .padding(48)
+    }
+
+    private var actionButtons: some View {
+        HStack(spacing: 8) {
+            Button("Download HVSC (~640 MB)") {
+                Task { await state.downloadHVSC() }
+            }
+            .keyboardShortcut(.defaultAction)
+
+            Button("Choose Folder…") {
+                chooseFolder()
+            }
+        }
     }
 
     private func chooseFolder() {
