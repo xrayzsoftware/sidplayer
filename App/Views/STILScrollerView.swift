@@ -24,7 +24,11 @@ struct STILScrollerView: View {
             let line = cachedLine
             let cycle = max(1, textWidth + geo.size.width)
 
-            TimelineView(.animation) { context in
+            // 30 Hz is plenty for a marquee, and there's nothing to scroll
+            // with no tune loaded — the unconstrained schedule redrew at
+            // display rate even while the app sat idle.
+            TimelineView(.animation(minimumInterval: 1.0 / 30.0,
+                                    paused: state.currentTuneID == nil)) { context in
                 let elapsed = CGFloat(context.date.timeIntervalSince(startDate))
                 let scrolled = (elapsed * speed).truncatingRemainder(dividingBy: cycle)
                 let offset = geo.size.width - scrolled

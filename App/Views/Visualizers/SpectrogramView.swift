@@ -121,6 +121,10 @@ struct SpectrogramView: View {
             let colW  = area.width  / CGFloat(kSpecHistory)
             let bandH = area.height / CGFloat(kSpecBands)
 
+            // Group cells by colour bucket and fill each bucket once: one
+            // fill per cell was up to ~6k Path fills per frame.
+            let bucketCount = 64
+            var buckets = [Path?](repeating: nil, count: bucketCount)
             for x in 0..<kSpecHistory {
                 let idx = (spec.head + x) % kSpecHistory  // oldest → leftmost
                 let col = spec.history[idx]
@@ -128,7 +132,7 @@ struct SpectrogramView: View {
                 for c in 0..<kSpecBands {
                     let v = col[c]
                     if v < 0.02 { continue }
-                    let lutIdx = min(255, Int(v * 255))
+                    let bucket = min(bucketCount - 1, Int(v * Float(bucketCount)))
                     // Low frequencies at the bottom, high at the top.
                     let yPos = area.maxY - CGFloat(c + 1) * bandH
                     let cell = CGRect(
@@ -137,8 +141,14 @@ struct SpectrogramView: View {
                         width:  colW + 0.5,
                         height: bandH + 0.5
                     )
-                    ctx.fill(Path(cell), with: .color(lut.colors[lutIdx]))
+                    if buckets[bucket] == nil { buckets[bucket] = Path() }
+                    buckets[bucket]!.addRect(cell)
                 }
+            }
+            for (b, path) in buckets.enumerated() {
+                guard let path else { continue }
+                let lutIdx = min(255, (b * 256 + 128) / bucketCount)
+                ctx.fill(path, with: .color(lut.colors[lutIdx]))
             }
 
             ctx.draw(

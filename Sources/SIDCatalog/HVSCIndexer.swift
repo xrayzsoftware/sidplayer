@@ -29,7 +29,7 @@ public actor HVSCIndexer {
         var paths: [URL] = []
         paths.reserveCapacity(60_000)
         for dir in source.availableTuneDirs() {
-            paths.append(contentsOf: enumerateSIDs(under: dir))
+            paths.append(contentsOf: try enumerateSIDs(under: dir))
         }
         let total = paths.count
 
@@ -124,7 +124,17 @@ public actor HVSCIndexer {
         // Drop rows for files that no longer exist, then heal any playlist
         // position gaps their removal may have cascaded. Files that merely
         // failed this pass are kept — only confirmed-absent paths get dropped.
-        try db.deleteTunesExcept(paths: seenPaths.union(failedPaths))
+        //
+        // `tunes` cascades into playlists, play history and play counts, so
+        // refuse the delete when the walk observed far fewer files than the
+        // catalog holds: that's a dropped volume or a wrong folder, not a
+        // collection that genuinely halved. The upserts above are kept.
+        let observed = seenPaths.union(failedPaths)
+        let catalogued = try db.count()
+        if catalogued > 0, observed.count * 2 < catalogued {
+            throw HVSCError.suspiciousShrink(seen: observed.count, catalogued: catalogued)
+        }
+        try db.deleteTunesExcept(paths: observed)
         try db.normalizePlaylistPositions()
 
         progress?(.init(processed: processed, inserted: inserted, total: total, currentPath: nil))
@@ -132,14 +142,22 @@ public actor HVSCIndexer {
     }
 
     /// Enumerate .sid files under a directory using FileManager (depth-unlimited).
-    private func enumerateSIDs(under dir: URL) -> [URL] {
+    /// A directory the walk can't read throws rather than being skipped:
+    /// skipped tunes would otherwise be treated as confirmed-absent and
+    /// deleted (cascading through playlists and history).
+    private func enumerateSIDs(under dir: URL) throws -> [URL] {
         var out: [URL] = []
+        var failure: (URL, Error)?
         let fm = FileManager.default
         guard let it = fm.enumerator(
             at: dir,
             includingPropertiesForKeys: [.isRegularFileKey],
-            options: [.skipsHiddenFiles]
-        ) else { return out }
+            options: [.skipsHiddenFiles],
+            errorHandler: { url, error in
+                if failure == nil { failure = (url, error) }
+                return false   // stop the walk
+            }
+        ) else { throw HVSCError.enumerationFailed(dir.path) }
 
         for case let url as URL in it {
             let lower = url.pathExtension.lowercased()
@@ -147,6 +165,7 @@ public actor HVSCIndexer {
                 out.append(url)
             }
         }
+        if let (url, _) = failure { throw HVSCError.enumerationFailed(url.path) }
         return out
     }
 

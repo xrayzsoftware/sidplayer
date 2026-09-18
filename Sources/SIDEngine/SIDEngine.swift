@@ -193,6 +193,13 @@ public final class SIDPlayerEngine {
     /// Raw CIA1 Timer A value programmed by the tune (0 if VBI / not set yet).
     public var cia1TimerA: Int { bridge.cia1TimerA() }
 
+    /// C64 cycles advanced per internal render refill. Lower it when register
+    /// snapshots must not straddle a play call (see SIDMIDIExporter).
+    public var renderQuantumCycles: Int {
+        get { bridge.renderQuantumCycles }
+        set { bridge.renderQuantumCycles = newValue }
+    }
+
     /// Snapshots the last-written register image (32 bytes) of SID chip `sid`
     /// (0, 1, or 2). Returns nil if that chip isn't present. Call from the
     /// producer thread — it reads engine state and must not race `render`.

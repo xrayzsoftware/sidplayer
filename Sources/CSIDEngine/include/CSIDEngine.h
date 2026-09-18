@@ -82,6 +82,12 @@ typedef NS_ENUM(NSInteger, CSIDSampling) {
 /// Returns frames actually written (0 indicates engine stop / error).
 - (NSInteger)renderFrames:(int16_t *)buffer count:(NSInteger)frameCount;
 
+/// C64 cycles the emulator advances per internal refill in renderFrames:.
+/// Default 5000 (≈225 samples at PAL/44.1k). Exporters that snapshot
+/// registers once per play-frame lower this so a refill never spans more
+/// than one play call; otherwise consecutive snapshots read the same image.
+@property (nonatomic, assign) NSInteger renderQuantumCycles;
+
 /// Current playback position, seconds since start of the active song.
 - (NSTimeInterval)currentTime;
 

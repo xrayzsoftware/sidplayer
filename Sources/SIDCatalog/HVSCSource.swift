@@ -47,9 +47,15 @@ public enum HVSCError: LocalizedError, Equatable {
     case manifestParseFailed(String)
     case extractionFailed(String)
     case networkError(String)
+    case enumerationFailed(String)
+    case suspiciousShrink(seen: Int, catalogued: Int)
 
     public var errorDescription: String? {
         switch self {
+        case .enumerationFailed(let p):
+            return "couldn't read directory \(p) — is the HVSC volume mounted?"
+        case .suspiciousShrink(let seen, let catalogued):
+            return "found only \(seen) of \(catalogued) catalogued tunes; kept the old rows (is the HVSC volume mounted?)"
         case .missingFile(let p):       return "missing file: \(p)"
         case .missingDirectory(let p):  return "missing directory: \(p)"
         case .manifestParseFailed(let s): return "couldn't parse HVSC manifest: \(s)"

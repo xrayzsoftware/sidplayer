@@ -22,6 +22,17 @@
     size_t          _scratchHead;    // next sample to consume from _scratch
     NSInteger       _sampleRate;     // last sample rate passed to startSong
     NSInteger       _currentSong;    // 1-indexed; 0 = nothing started
+    // Config as of the last successful startSong:, for the reuse fast path.
+    BOOL _configured;
+    NSInteger _appliedSampleRate;
+    BOOL _appliedUseReSIDfp;
+    double _appliedFilter6581, _appliedFilter8580;
+    CSIDModel _appliedDefaultSidModel;
+    BOOL _appliedForceSidModel;
+    CSIDClock _appliedDefaultC64Model;
+    BOOL _appliedForceC64Model;
+    BOOL _appliedDigiBoost;
+    CSIDSampling _appliedSampling;
 }
 
 @synthesize currentSong = _currentSong;
@@ -74,8 +85,50 @@ static NSError *makeError(NSString *msg) {
         _useReSIDfp = NO;
         _filter6581Curve = 0.5;
         _filter8580Curve = 0.5;
+        _renderQuantumCycles = 5000;
+        _configured = NO;
     }
     return self;
+}
+
+/// Everything that feeds SidConfig / the builder. When unchanged since the
+/// last successful startSong:, a subtune change can reuse the existing
+/// builder and skip engine->config() — rebuilding the SID emulation (four
+/// engines' worth, on the main thread) for every subtune step was a hitch.
+- (BOOL)configUnchangedForSampleRate:(NSInteger)sampleRate {
+    return _configured
+        && _builder
+        && _appliedSampleRate == sampleRate
+        && _appliedUseReSIDfp == _useReSIDfp
+        && _appliedFilter6581 == _filter6581Curve
+        && _appliedFilter8580 == _filter8580Curve
+        && _appliedDefaultSidModel == _defaultSidModel
+        && _appliedForceSidModel == _forceSidModel
+        && _appliedDefaultC64Model == _defaultC64Model
+        && _appliedForceC64Model == _forceC64Model
+        && _appliedDigiBoost == _digiBoost
+        && _appliedSampling == _samplingMethod;
+}
+
+- (void)rememberAppliedConfigForSampleRate:(NSInteger)sampleRate {
+    _configured = YES;
+    _appliedSampleRate = sampleRate;
+    _appliedUseReSIDfp = _useReSIDfp;
+    _appliedFilter6581 = _filter6581Curve;
+    _appliedFilter8580 = _filter8580Curve;
+    _appliedDefaultSidModel = _defaultSidModel;
+    _appliedForceSidModel = _forceSidModel;
+    _appliedDefaultC64Model = _defaultC64Model;
+    _appliedForceC64Model = _forceC64Model;
+    _appliedDigiBoost = _digiBoost;
+    _appliedSampling = _samplingMethod;
+}
+
+/// Drop any PCM left from the previous song so a later play() can't emit a
+/// burst of it before the (now failed) engine returns nothing.
+- (void)discardScratch {
+    _scratch.clear();
+    _scratchHead = 0;
 }
 
 - (void)dealloc {
@@ -144,6 +197,20 @@ static NSError *makeError(NSString *msg) {
     // is actually active; store that, not the request, or currentSong lies.
     songNum = (NSInteger)_tune->selectSong((unsigned)songNum);
 
+    if ([self configUnchangedForSampleRate:sampleRate]) {
+        // Same emulation settings: just restart the engine on the selected
+        // song with the builder it already holds.
+        if (!_engine->load(_tune)) {
+            [self discardScratch];
+            if (error) *error = makeError(@(_engine->error() ?: "engine load failed"));
+            return NO;
+        }
+        _engine->initMixer(false);
+        [self discardScratch];
+        _currentSong = songNum;
+        return YES;
+    }
+
     // (Re)create the SID emulation builder for the selected engine. The
     // previous builder stays alive until engine->config() below has released
     // its SIDs; freeing it earlier would dangle the engine's locked emus.
@@ -184,6 +251,8 @@ static NSError *makeError(NSString *msg) {
         ? SidConfig::RESAMPLE_INTERPOLATE : SidConfig::INTERPOLATE;
 
     if (!_engine->config(cfg)) {
+        [self discardScratch];
+        _configured = NO;
         if (error) *error = makeError(@(_engine->error() ?: "engine config failed"));
         return NO;   // leak oldBuilder on the rare config failure: the engine's
                      // SID references are unchanged, so freeing it could dangle.
@@ -191,15 +260,17 @@ static NSError *makeError(NSString *msg) {
     // config() succeeded — old SIDs released, new ones locked. Free the old.
     delete oldBuilder;
     if (!_engine->load(_tune)) {
+        [self discardScratch];
+        _configured = NO;
         if (error) *error = makeError(@(_engine->error() ?: "engine load failed"));
         return NO;
     }
     _engine->initMixer(false);  // mono
 
-    _scratch.clear();
-    _scratchHead = 0;
+    [self discardScratch];
     _sampleRate = sampleRate;
     _currentSong = songNum;
+    [self rememberAppliedConfigForSampleRate:sampleRate];
     return YES;
 }
 
@@ -223,8 +294,9 @@ static NSError *makeError(NSString *msg) {
             continue;
         }
 
-        // Refill scratch from the engine. ~5000 cycles ≈ 225 samples at PAL/44.1k.
-        const unsigned chunkCycles = 5000;
+        // Refill scratch from the engine. Default 5000 cycles ≈ 225 samples
+        // at PAL/44.1k; exporters shrink it (see renderQuantumCycles).
+        const unsigned chunkCycles = (unsigned)(_renderQuantumCycles > 0 ? _renderQuantumCycles : 5000);
         int produced = _engine->play(chunkCycles);
         if (produced <= 0) break;
 

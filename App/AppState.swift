@@ -131,16 +131,27 @@ public final class AppState {
         // view's .onChange fired, double-loading every track.
         didSet {
             guard let id = selectedID, id != oldValue else { return }
-            if !navigatingWithinQueue {
-                // A user pick from the current view: that view becomes the play
-                // queue, and a fresh shuffle session starts over it.
-                playQueue = sortedRows.map(\.id)
-                shufflePlayed.removeAll()
-                shuffleHistory.removeAll()
+            pendingPlay?.cancel()
+            if navigatingWithinQueue {
+                Task { await play(tuneID: id) }
+                return
             }
-            Task { await play(tuneID: id) }
+            // A user pick from the current view: that view becomes the play
+            // queue, and a fresh shuffle session starts over it.
+            playQueue = sortedRows.map(\.id)
+            shufflePlayed.removeAll()
+            shuffleHistory.removeAll()
+            // Short debounce: Table moves the selection on every ↑/↓ and
+            // type-select keystroke, and each would otherwise load, play and
+            // record a tune the user only passed over.
+            pendingPlay = Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 150_000_000)
+                guard !Task.isCancelled, let self else { return }
+                await self.play(tuneID: id)
+            }
         }
     }
+    private var pendingPlay: Task<Void, Never>?
     public var sortOrder: [KeyPathComparator<TuneItem>] = [
         KeyPathComparator(\TuneItem.row.author, order: .forward),
         KeyPathComparator(\TuneItem.row.title,  order: .forward),
@@ -599,14 +610,43 @@ public final class AppState {
 
     // MARK: HVSC download + index
 
-    public func downloadHVSC() async {
+    /// The in-flight download or re-index, so it can be cancelled.
+    private var libraryTask: Task<Void, Never>?
+    /// Bumped per library operation and at its end, so a progress callback
+    /// that lands late (they're unstructured MainActor hops) can't revert a
+    /// finished state back to "indexing".
+    private var libraryRun = 0
+
+    public func downloadHVSC() {
         guard !isBusy else { return }
+        libraryTask = Task { await performDownload() }
+    }
+
+    public func reindex() {
+        guard !isBusy else { return }
+        libraryTask = Task { await performReindex() }
+    }
+
+    public func cancelLibraryTask() {
+        libraryTask?.cancel()
+    }
+
+    /// State to show once an operation is cancelled: whatever the catalog
+    /// already holds.
+    private func idleBootstrapState() -> BootstrapStatus {
+        ((try? catalog?.count()) ?? 0) > 0 ? .ready : .notReady
+    }
+
+    private func performDownload() async {
         let dest = supportDir().appendingPathComponent("hvsc", isDirectory: true)
+        libraryRun &+= 1
+        let run = libraryRun
         bootstrap = .downloadingHVSC(progress: 0, label: "discovering manifest…")
         do {
             let dl = HVSCDownloader()
             let result = try await dl.downloadAndExtract(to: dest) { phase in
                 Task { @MainActor in
+                    guard self.libraryRun == run else { return }
                     switch phase.kind {
                     case .discoveringManifest:
                         self.bootstrap = .downloadingHVSC(progress: 0, label: "discovering manifest…")
@@ -633,29 +673,46 @@ public final class AppState {
                 }
             }
             self.hvscSource = result.source
-            await reindex()
+            libraryRun &+= 1
+            // Not the gated public reindex(): we're still "busy" here, and
+            // the gate would silently skip the index the download exists for.
+            await performReindex()
+        } catch is CancellationError {
+            libraryRun &+= 1
+            bootstrap = idleBootstrapState()
         } catch {
+            libraryRun &+= 1
             bootstrap = .error("HVSC download failed: \(error.localizedDescription)")
         }
     }
 
-    public func reindex() async {
-        guard !isBusy, let source = hvscSource, let db = catalog else { return }
+    private func performReindex() async {
+        guard let source = hvscSource, let db = catalog else { return }
+        libraryRun &+= 1
+        let run = libraryRun
         bootstrap = .indexing(processed: 0, total: nil)
         do {
             let indexer = HVSCIndexer()
             _ = try await indexer.reindex(source: source, into: db) { p in
                 Task { @MainActor in
+                    guard self.libraryRun == run else { return }
                     self.bootstrap = .indexing(processed: p.processed, total: p.total)
                 }
             }
+            libraryRun &+= 1
             bootstrap = .ready
-            try await refreshSearch()
+        } catch is CancellationError {
+            libraryRun &+= 1
+            bootstrap = idleBootstrapState()
         } catch {
             // Owned here rather than by callers: a moved/renamed HVSC folder
             // used to leave `bootstrap` stuck at .indexing forever.
+            libraryRun &+= 1
             bootstrap = .error("Re-index failed: \(error.localizedDescription)")
         }
+        // Outside the do/catch: a search failure after a successful index is
+        // not a re-index failure and must not drop the app to the error screen.
+        do { try await refreshSearch() } catch { lastError = error.localizedDescription }
     }
 
     public func setHVSCFolder(_ url: URL) async {
@@ -669,7 +726,9 @@ public final class AppState {
             HVSCBookmark.save(url)
             hvscSource = candidate
             if let oldRoot, oldRoot != url { HVSCBookmark.release(oldRoot) }
-            await reindex()
+            let t = Task { await performReindex() }
+            libraryTask = t
+            await t.value
         } catch {
             bootstrap = .error(error.localizedDescription)
         }
@@ -683,6 +742,10 @@ public final class AppState {
         // superseded — e.g. the user switched tab/filter while it ran.
         searchGen &+= 1
         let gen = searchGen
+        // Also invalidate any in-flight detached applySort(): it would
+        // otherwise land after this refresh and repopulate sortedRows (and
+        // hence the play queue) from the previous tab's list.
+        sortGen &+= 1
         switch browseMode {
         case .all:
             // Run the SQL and the (up to 65k-row) TuneItem mapping off the main
@@ -807,6 +870,9 @@ public final class AppState {
                 currentTuneID = nil
                 subtuneCount = 1
                 nowPlaying.clear()
+                // No session left to tick (keeps isStopped truthful).
+                ticker?.cancel()
+                ticker = nil
             }
         }
     }

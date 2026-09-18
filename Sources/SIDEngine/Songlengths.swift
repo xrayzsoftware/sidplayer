@@ -53,7 +53,10 @@ public struct Songlengths: Sendable {
     static func parseDurations<S: StringProtocol>(_ s: S) -> [Int] {
         var result: [Int] = []
         for token in s.split(whereSeparator: { $0 == " " || $0 == "\t" || $0 == "\r" }) {
-            if let ms = parseDuration(token) { result.append(ms) }
+            // Hold the position of an unparseable token (0 = unknown length)
+            // so later subtunes keep their index; dropping it silently
+            // renumbered every subtune after it.
+            result.append(parseDuration(token) ?? 0)
         }
         return result
     }

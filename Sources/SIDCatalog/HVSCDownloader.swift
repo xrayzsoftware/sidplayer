@@ -107,6 +107,8 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
             }
         } catch let err as HVSCError {
             throw err
+        } catch is CancellationError {
+            throw CancellationError()
         } catch {
             throw HVSCError.extractionFailed("7z: \(error.localizedDescription)")
         }
@@ -196,11 +198,17 @@ public final class HVSCDownloader: NSObject, @unchecked Sendable {
         let task = session.downloadTask(with: url)
         try await withTaskCancellationHandler {
             try await withCheckedThrowingContinuation { (cont: CheckedContinuation<Void, Error>) in
-                delegate.continuation = cont
-                task.resume()
+                // If cancellation already ran, store() refuses and we resume
+                // here; otherwise the delegate (or cancel()) owns the resume.
+                if delegate.store(cont) {
+                    task.resume()
+                } else {
+                    cont.resume(throwing: CancellationError())
+                }
             }
         } onCancel: {
             task.cancel()
+            delegate.cancel()
         }
     }
 }
@@ -213,7 +221,35 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     private let onProgress: (Int64, Int64?) -> Void
     private var nextReport: Int64 = 0
     private let reportEvery: Int64 = 512 * 1024  // 512 KB granularity
-    var continuation: CheckedContinuation<Void, Error>?
+    // `continuation` is touched from the caller's thread and the session's
+    // delegate queue; the lock keeps the single resume exactly-once.
+    private let lock = NSLock()
+    private var continuation: CheckedContinuation<Void, Error>?
+    private var cancelled = false
+
+    /// Returns false (without storing) if cancel() already ran.
+    func store(_ cont: CheckedContinuation<Void, Error>) -> Bool {
+        lock.lock(); defer { lock.unlock() }
+        if cancelled { return false }
+        continuation = cont
+        return true
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let c = continuation
+        continuation = nil
+        lock.unlock()
+        c?.resume(throwing: CancellationError())
+    }
+
+    private func take() -> CheckedContinuation<Void, Error>? {
+        lock.lock(); defer { lock.unlock() }
+        let c = continuation
+        continuation = nil
+        return c
+    }
 
     init(destination: URL, onProgress: @escaping (Int64, Int64?) -> Void) {
         self.destination = destination
@@ -243,8 +279,7 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
         // this delegate method returns.
         do {
             try FileManager.default.moveItem(at: location, to: destination)
-            continuation?.resume()
-            continuation = nil
+            take()?.resume()
         } catch {
             resume(throwing: HVSCError.extractionFailed("couldn't save download: \(error.localizedDescription)"))
         }
@@ -259,7 +294,6 @@ private final class DownloadDelegate: NSObject, URLSessionDownloadDelegate {
     }
 
     private func resume(throwing error: Error) {
-        continuation?.resume(throwing: error)
-        continuation = nil
+        take()?.resume(throwing: error)
     }
 }

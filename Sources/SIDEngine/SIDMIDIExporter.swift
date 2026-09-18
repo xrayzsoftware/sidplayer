@@ -197,6 +197,12 @@ public func exportSIDToMIDI(
     // Sample registers at the tune's actual play rate so every play-call (and
     // thus every arpeggio step) is captured.
     let playRateHz = frameHz * Double(engine.playSpeedMultiplier())
+    // The bridge advances the emulator in fixed-cycle refills; if one refill
+    // spans more than a play frame, consecutive register snapshots read the
+    // same image and every intervening play call (arpeggio step) is lost.
+    // Keep a refill to at most half a play frame.
+    let cpuHz = isNTSC ? 1_022_730.0 : 985_248.0
+    engine.renderQuantumCycles = max(500, Int(cpuHz / playRateHz / 2))
     let chips = max(1, info?.sidChips ?? 1)
     let voiceCount = chips * 3
 

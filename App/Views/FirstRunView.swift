@@ -24,6 +24,7 @@ struct FirstRunView: View {
                     Text(label)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
+                    cancelButton
                 }
             case .indexing(let processed, let total):
                 VStack(spacing: 6) {
@@ -39,6 +40,7 @@ struct FirstRunView: View {
                             .font(.system(size: 11))
                             .foregroundStyle(.secondary)
                     }
+                    cancelButton
                 }
             case .error(let msg):
                 Text(msg)
@@ -56,10 +58,15 @@ struct FirstRunView: View {
         .padding(48)
     }
 
+    private var cancelButton: some View {
+        Button("Cancel") { state.cancelLibraryTask() }
+            .controlSize(.small)
+    }
+
     private var actionButtons: some View {
         HStack(spacing: 8) {
             Button("Download HVSC (~640 MB)") {
-                Task { await state.downloadHVSC() }
+                state.downloadHVSC()
             }
             .keyboardShortcut(.defaultAction)
 

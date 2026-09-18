@@ -12,6 +12,7 @@ final class FFTAnalyzer {
     private var realIn: [Float]
     private var imagIn: [Float]
     private var window: [Float]
+    private var windowed: [Float]
 
     init?(size: Int) {
         guard size > 0, size & (size - 1) == 0 else { return nil }
@@ -23,9 +24,12 @@ final class FFTAnalyzer {
         self.log2n  = log2n
         self.size   = size
         self.bins   = size / 2
-        self.realIn = [Float](repeating: 0, count: size)
-        self.imagIn = [Float](repeating: 0, count: size)
+        // zrip's split-complex input is size/2 each: even samples in realp,
+        // odd samples in imagp (packed by vDSP_ctoz).
+        self.realIn = [Float](repeating: 0, count: size / 2)
+        self.imagIn = [Float](repeating: 0, count: size / 2)
         self.window = [Float](repeating: 0, count: size)
+        self.windowed = [Float](repeating: 0, count: size)
         vDSP_hann_window(&window, vDSP_Length(size), Int32(vDSP_HANN_NORM))
     }
 
@@ -34,11 +38,19 @@ final class FFTAnalyzer {
     /// Apply Hann window to `snap` and run forward FFT in place.
     /// `snap.count` must equal `size`.
     func transform(_ snap: [Float]) {
-        vDSP_vmul(snap, 1, window, 1, &realIn, 1, vDSP_Length(size))
-        for i in 0..<size { imagIn[i] = 0 }
+        vDSP_vmul(snap, 1, window, 1, &windowed, 1, vDSP_Length(size))
+        let half = size / 2
         realIn.withUnsafeMutableBufferPointer { rb in
             imagIn.withUnsafeMutableBufferPointer { ib in
                 var sc = DSPSplitComplex(realp: rb.baseAddress!, imagp: ib.baseAddress!)
+                // Feeding the whole signal as "real" made zrip transform only
+                // the first half of the window: every band an octave off and
+                // the top half mirrored.
+                windowed.withUnsafeBufferPointer { wb in
+                    wb.baseAddress!.withMemoryRebound(to: DSPComplex.self, capacity: half) { cp in
+                        vDSP_ctoz(cp, 2, &sc, 1, vDSP_Length(half))
+                    }
+                }
                 vDSP_fft_zrip(setup, &sc, 1, log2n, FFTDirection(FFT_FORWARD))
             }
         }

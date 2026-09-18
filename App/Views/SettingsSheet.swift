@@ -34,13 +34,13 @@ struct SettingsSheet: View {
 
             HStack(spacing: 8) {
                 Button("Download HVSC (~640 MB)") {
-                    Task { await state.downloadHVSC() }
+                    state.downloadHVSC()
                 }
                 Button("Choose Folder…") {
                     chooseFolder()
                 }
                 Button("Re-index") {
-                    Task { await state.reindex() }
+                    state.reindex()
                 }
                 .disabled(state.hvscSource == nil)
             }
@@ -52,23 +52,30 @@ struct SettingsSheet: View {
                 VStack(alignment: .leading, spacing: 4) {
                     ProgressView(value: progress)
                         .tint(theme.textAccent)
-                    Text(label)
-                        .font(.caption)
-                        .foregroundStyle(theme.textSecondary)
+                    HStack {
+                        Text(label)
+                            .font(.caption)
+                            .foregroundStyle(theme.textSecondary)
+                        Spacer()
+                        Button("Cancel") { state.cancelLibraryTask() }
+                            .controlSize(.small)
+                    }
                 }
             case .indexing(let processed, let total):
                 VStack(alignment: .leading, spacing: 4) {
                     if let total {
                         ProgressView(value: Double(processed), total: Double(total))
                             .tint(theme.textAccent)
-                        Text("\(processed) / \(total) tunes")
-                            .font(.caption)
-                            .foregroundStyle(theme.textSecondary)
                     } else {
                         ProgressView()
-                        Text("Discovering tunes…")
+                    }
+                    HStack {
+                        Text(total.map { "\(processed) / \($0) tunes" } ?? "Discovering tunes…")
                             .font(.caption)
                             .foregroundStyle(theme.textSecondary)
+                        Spacer()
+                        Button("Cancel") { state.cancelLibraryTask() }
+                            .controlSize(.small)
                     }
                 }
             case .error(let msg):

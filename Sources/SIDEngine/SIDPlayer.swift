@@ -198,10 +198,12 @@ public final class SIDPlayer: @unchecked Sendable {
         }
     }
 
-    /// Bounded wait for the producer to buffer at least half a ring.
+    /// Bounded wait for the producer to buffer at least half a ring. Runs on
+    /// the caller's (main) thread, so the deadline is short: a tune that
+    /// never renders must not stall the UI on every play attempt.
     private func primeRing() {
         let target = min(2048, ringCapacity / 2)
-        let deadline = Date().addingTimeInterval(0.1)
+        let deadline = Date().addingTimeInterval(0.02)
         while ring.available < target, Date() < deadline, !producerStop.get {
             Thread.sleep(forTimeInterval: 0.002)
         }
