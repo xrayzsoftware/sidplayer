@@ -99,6 +99,10 @@ struct SettingsSheet: View {
 
             Divider().background(theme.separator)
 
+            OutputSection()
+
+            Divider().background(theme.separator)
+
             EmulationSection()
 
             Divider().background(theme.separator)
@@ -111,6 +115,75 @@ struct SettingsSheet: View {
         // Re-read when a download/index finishes, not on every progress tick.
         .task(id: state.isBusy) {
             tuneCount = (try? state.catalog?.count()) ?? 0
+        }
+    }
+
+    private struct OutputSection: View {
+        @Environment(AppState.self) private var state
+        @State private var testResult: String?
+        @State private var testing = false
+
+        var body: some View {
+            @Bindable var state = state
+            let theme = state.theme
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Output")
+                    .font(.headline)
+                    .foregroundStyle(theme.textPrimary)
+
+                HStack {
+                    Text("Play on")
+                        .foregroundStyle(theme.textPrimary)
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { state.outputTarget },
+                        set: { state.setOutputTarget($0) }
+                    )) {
+                        ForEach(AppState.OutputTarget.allCases, id: \.self) { t in
+                            Text(t.label).tag(t)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 200)
+                }
+
+                if state.outputTarget == .ultimate {
+                    HStack {
+                        Text("Address")
+                            .foregroundStyle(theme.textPrimary)
+                        TextField("192.168.1.64 or c64u.local", text: $state.ultimateHost)
+                            .textFieldStyle(.roundedBorder)
+                            .autocorrectionDisabled()
+                    }
+                    HStack {
+                        Text("Password")
+                            .foregroundStyle(theme.textPrimary)
+                        SecureField("optional network password", text: $state.ultimatePassword)
+                            .textFieldStyle(.roundedBorder)
+                    }
+                    HStack(spacing: 8) {
+                        Button(testing ? "Testing…" : "Test connection") {
+                            testing = true
+                            Task {
+                                testResult = await state.testUltimateConnection()
+                                testing = false
+                            }
+                        }
+                        .disabled(testing || state.ultimateHost.trimmingCharacters(in: .whitespaces).isEmpty)
+                        if let testResult {
+                            Text(testResult)
+                                .font(.caption)
+                                .foregroundStyle(theme.textSecondary)
+                                .lineLimit(2)
+                        }
+                    }
+                    Text("The tune plays on the C64's own SID via the Ultimate REST API. Visualizers and the register monitor only reflect the Mac's emulation, so they're hidden in this mode.")
+                        .font(.caption)
+                        .foregroundStyle(theme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
         }
     }
 

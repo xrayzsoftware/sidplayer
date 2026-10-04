@@ -11,7 +11,9 @@ struct ContentView: View {
                 NowPlayingHeader()
                     .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
 
-                if state.showVisualizers {
+                // The visualizers tap the local engine; with the C64 Ultimate
+                // as the target there is nothing to show.
+                if state.showVisualizers && state.outputTarget == .mac {
                     HStack(spacing: 8) {
                         WaveformView(taps: state.player.voiceTaps)
                         SecondaryVisualizer()

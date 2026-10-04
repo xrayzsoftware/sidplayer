@@ -279,6 +279,77 @@ public final class AppState {
     private static let filter6581Key  = "filter6581Curve.v1"
     private static let filter8580Key  = "filter8580Curve.v1"
     private static let volumeKey      = "volume.v1"
+    private static let outputTargetKey = "outputTarget.v1"
+    private static let ultimateHostKey = "ultimateHost.v1"
+    private static let ultimatePasswordKey = "ultimatePassword.v1"
+
+    // MARK: Output target
+
+    /// Where playback happens: the local libsidplayfp emulation, or a C64
+    /// Ultimate on the LAN running the tune on its own SID via the firmware's
+    /// REST API. The Mac still owns the queue, clock and auto-advance.
+    public enum OutputTarget: String, CaseIterable {
+        case mac, ultimate
+        public var label: String {
+            switch self {
+            case .mac: return "This Mac"
+            case .ultimate: return "C64 Ultimate"
+            }
+        }
+    }
+    public private(set) var outputTarget: OutputTarget = .mac
+    public var ultimateHost: String = "" {
+        didSet { UserDefaults.standard.set(ultimateHost, forKey: Self.ultimateHostKey) }
+    }
+    public var ultimatePassword: String = "" {
+        didSet { UserDefaults.standard.set(ultimatePassword, forKey: Self.ultimatePasswordKey) }
+    }
+    private var ultimate: UltimateClient? {
+        UltimateClient(host: ultimateHost, password: ultimatePassword)
+    }
+    /// The .sid bytes last sent to the Ultimate, re-posted for subtune steps.
+    private var ultimateTuneData: Data?
+    /// Wall-clock playback position for the remote target: elapsed before the
+    /// last pause, plus time since the last resume.
+    private var remoteElapsedBase: TimeInterval = 0
+    private var remoteResumedAt: Date?
+    /// Bumped per play(tuneID:) so a remote upload that finishes after the user
+    /// has moved on doesn't overwrite the newer track's state.
+    private var playGen = 0
+
+    public func setOutputTarget(_ target: OutputTarget) {
+        guard target != outputTarget else { return }
+        // Stop on the *old* target first so the C64 is reset / the local
+        // engine silenced, then switch.
+        stop()
+        outputTarget = target
+        UserDefaults.standard.set(target.rawValue, forKey: Self.outputTargetKey)
+    }
+
+    /// Identifies the configured Ultimate, for the Settings "Test" button.
+    public func testUltimateConnection() async -> String {
+        guard let client = ultimate else { return "Enter the C64 Ultimate's address first." }
+        do {
+            let info = try await client.info()
+            return info.summary.isEmpty ? "Connected." : "Connected: \(info.summary)"
+        } catch {
+            return error.localizedDescription
+        }
+    }
+
+    private func playbackClock() -> TimeInterval {
+        switch outputTarget {
+        case .mac:
+            return player.currentTime
+        case .ultimate:
+            return remoteElapsedBase + (remoteResumedAt.map { Date().timeIntervalSince($0) } ?? 0)
+        }
+    }
+
+    private func resetRemoteClock(running: Bool) {
+        remoteElapsedBase = 0
+        remoteResumedAt = running ? Date() : nil
+    }
 
     public init() {
         if UserDefaults.standard.object(forKey: Self.volumeKey) != nil {
@@ -307,6 +378,12 @@ public final class AppState {
             repeatMode = mode
         }
         loadEmulationConfig()
+        if let raw = UserDefaults.standard.string(forKey: Self.outputTargetKey),
+           let t = OutputTarget(rawValue: raw) {
+            outputTarget = t
+        }
+        ultimateHost = UserDefaults.standard.string(forKey: Self.ultimateHostKey) ?? ""
+        ultimatePassword = UserDefaults.standard.string(forKey: Self.ultimatePasswordKey) ?? ""
     }
 
     // MARK: Now Playing / media keys
@@ -404,7 +481,9 @@ public final class AppState {
         UserDefaults.standard.set(config.filter6581Curve, forKey: Self.filter6581Key)
         UserDefaults.standard.set(config.filter8580Curve, forKey: Self.filter8580Key)
         player.emulationConfig = config
-        if currentTuneID != nil {
+        // Only the local engine has the tune loaded; reloading while the
+        // Ultimate is the target would start the old tune on the Mac.
+        if currentTuneID != nil, outputTarget == .mac {
             do {
                 try player.reloadCurrentTune()
             } catch {
@@ -844,6 +923,10 @@ public final class AppState {
                 lastError = "File not found at \(abs)"
                 return
             }
+            if outputTarget == .ultimate {
+                try await playOnUltimate(tuneID: tuneID, row: row, path: abs, db: db)
+                return
+            }
             try player.load(path: abs)
             try player.play()
             let info         = player.info
@@ -877,7 +960,62 @@ public final class AppState {
         }
     }
 
+    /// Remote-target counterpart of the local load/play block in play(tuneID:).
+    /// The Ultimate's own player runs the tune; we parse the header locally
+    /// for subtune count/default song and keep the clock on the Mac.
+    private func playOnUltimate(tuneID: Int64, row: TuneRow, path: String, db: CatalogDB) async throws {
+        guard let client = ultimate else {
+            throw UltimateClient.Failure(message: "C64 Ultimate address not set. Open Settings → Output.")
+        }
+        let data = try Data(contentsOf: URL(fileURLWithPath: path))
+        let header = try PSIDHeader(data: data)
+        let song = max(1, Int(header.startSong))
+        playGen &+= 1
+        let gen = playGen
+        // Silence the local engine; the C64 is the one making sound now.
+        player.stop()
+        try await client.playSID(data, song: song)
+        // The user may have picked another track while the upload ran.
+        guard gen == playGen else { return }
+        ultimateTuneData = data
+        currentTuneID    = tuneID
+        currentSubtune   = song
+        subtuneCount     = max(1, Int(header.songs))
+        currentTuneClock = header.clock
+        defaultLengthMs  = row.defaultLengthMs ?? 0
+        subtuneLengthsMs = ((try? db.lengths(tuneId: tuneID)) ?? []).map(\.durationMs)
+        isPlaying        = true
+        lastError        = nil
+        resetRemoteClock(running: true)
+        currentTime = 0
+        startTicker()
+        try? db.recordPlay(tuneId: tuneID, subtune: song)
+        recentCount = (try? db.recentlyPlayedCount()) ?? recentCount
+        refreshNowPlaying()
+    }
+
+    /// Re-posts the current tune to the Ultimate with a different song number.
+    private func selectUltimateSubtune(_ song: Int) async {
+        guard let client = ultimate, let data = ultimateTuneData else { return }
+        let gen = playGen
+        do {
+            try await client.playSID(data, song: song)
+            guard gen == playGen else { return }
+            currentSubtune = song
+            resetRemoteClock(running: true)
+            isPlaying = true
+            currentTime = 0
+            refreshNowPlaying()
+        } catch {
+            lastError = error.localizedDescription
+        }
+    }
+
     public func togglePlayPause() {
+        if outputTarget == .ultimate {
+            toggleUltimatePlayPause()
+            return
+        }
         if isPlaying {
             player.pause()
             isPlaying = false
@@ -903,8 +1041,45 @@ public final class AppState {
         }
     }
 
+    private func toggleUltimatePlayPause() {
+        guard let client = ultimate, currentTuneID != nil else { return }
+        if isPlaying {
+            // Optimistic: freeze the clock now, surface a failure afterwards.
+            remoteElapsedBase = playbackClock()
+            remoteResumedAt = nil
+            isPlaying = false
+            nowPlaying.setPlaying(false, elapsedSec: currentTime)
+            Task { do { try await client.pause() } catch { lastError = error.localizedDescription } }
+        } else {
+            let wasStopped = isStopped
+            remoteResumedAt = Date()
+            isPlaying = true
+            if wasStopped { startTicker() }
+            refreshNowPlaying()
+            Task {
+                do {
+                    // After stop() the machine was reset, so resume by
+                    // re-posting the tune rather than releasing the DMA line.
+                    if wasStopped, let data = ultimateTuneData {
+                        try await client.playSID(data, song: currentSubtune)
+                        resetRemoteClock(running: true)
+                    } else {
+                        try await client.resume()
+                    }
+                } catch {
+                    lastError = error.localizedDescription
+                    isPlaying = false
+                }
+            }
+        }
+    }
+
     public func stop() {
         player.stop()
+        if outputTarget == .ultimate, let client = ultimate, currentTuneID != nil {
+            Task { try? await client.reset() }
+        }
+        resetRemoteClock(running: false)
         isPlaying = false
         currentTime = 0
         ticker?.cancel()
@@ -1011,12 +1186,19 @@ public final class AppState {
         }
     }
 
-    public func nextSubtune() {
-        switchSubtune { try player.nextSong() }
-    }
+    public func nextSubtune() { stepSubtune(+1) }
+    public func previousSubtune() { stepSubtune(-1) }
 
-    public func previousSubtune() {
-        switchSubtune { try player.previousSong() }
+    /// Wrap-around subtune step on whichever target is playing.
+    private func stepSubtune(_ delta: Int) {
+        switch outputTarget {
+        case .mac:
+            switchSubtune { delta > 0 ? try player.nextSong() : try player.previousSong() }
+        case .ultimate:
+            guard !isStopped, subtuneCount > 0 else { return }
+            let n = (((currentSubtune - 1 + delta) % subtuneCount) + subtuneCount) % subtuneCount + 1
+            Task { await selectUltimateSubtune(n) }
+        }
     }
 
     /// True after stop() (or before anything has played): no playback session
@@ -1030,7 +1212,7 @@ public final class AppState {
                 try? await Task.sleep(nanoseconds: 100_000_000)  // 10 Hz
                 await MainActor.run {
                     guard let self else { return }
-                    self.currentTime = self.player.currentTime
+                    self.currentTime = self.playbackClock()
                     self.checkAutoAdvance()
                 }
             }
@@ -1051,7 +1233,7 @@ public final class AppState {
         guard currentTime * 1000 >= Double(lenMs) else { return }
 
         if (!shuffleEnabled || repeatMode == .one) && currentSubtune < subtuneCount {
-            switchSubtune { try player.nextSong() }
+            stepSubtune(+1)
         } else if repeatMode == .one, let id = currentTuneID {
             Task { await play(tuneID: id) }
         } else {
