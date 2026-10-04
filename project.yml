@@ -44,8 +44,13 @@ targets:
         LSMinimumSystemVersion: "14.0"
         NSHumanReadableCopyright: ""
         NSPrincipalClass: "NSApplication"
-        CFBundleShortVersionString: "0.11"
-        CFBundleVersion: "11"
+        # Plain-HTTP REST calls to a C64 Ultimate on the LAN, and the
+        # macOS local-network permission prompt text.
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+        NSLocalNetworkUsageDescription: "SID Player talks to a C64 Ultimate on your network to play tunes on real hardware."
+        CFBundleShortVersionString: "0.12"
+        CFBundleVersion: "12"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sidplayer.app

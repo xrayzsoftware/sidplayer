@@ -67,6 +67,7 @@ sidplayer/
 │   └── sidcat/              # CLI tool: catalog search and playback
 ├── App/                     # SwiftUI macOS application
 │   ├── AppState.swift       # @Observable single source of truth; owns player + catalog
+│   ├── UltimateClient.swift # REST client for a C64 Ultimate / Ultimate 64 (remote output target)
 │   ├── SIDPlayerApp.swift   # App entry point; sets up AppState, window group
 │   ├── ContentView.swift    # Root view; delegates to TabBarView
 │   ├── TuneItem.swift       # View model wrapping TuneRow for SwiftUI Table

@@ -2,6 +2,14 @@
 
 All notable changes to SID Player. Releases are signed and notarized DMGs for Apple silicon (macOS 14+), attached to each [GitHub release](https://github.com/xrayzsoftware/sidplayer/releases).
 
+## 0.12 — 2026-10-04
+
+### Added
+- **Play on a C64 Ultimate.** Settings → Output gains a "This Mac / C64 Ultimate" picker. Point it at a C64 Ultimate or Ultimate 64 on your network and tunes play on the real machine's SID through the Ultimate firmware's REST API: the .sid is uploaded to the device's built-in player, the subtune stepper re-uploads with the new song number, pause/resume hold the machine, and Stop resets it. The Mac keeps the queue, clock, shuffle, repeat, auto-advance, play history and Now Playing. A Test connection button reports the device's product and firmware. Visualizers are hidden in this mode since they tap the local engine.
+
+### Fixed
+- README no longer describes the pre-0.9 prev/next behaviour.
+
 ## 0.11 — 2026-09-18
 
 Second stability pass. Fixes a 0.10 regression that broke first-run onboarding.
