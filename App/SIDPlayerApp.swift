@@ -39,6 +39,10 @@ struct SIDPlayerApp: App {
                     openWindow(id: "mini-player")
                 }
                 .keyboardShortcut("m", modifiers: [.command, .shift])
+                Button("Winamp View") {
+                    WinampWindowController.shared.show(state: state)
+                }
+                .keyboardShortcut("w", modifiers: [.command, .shift])
             }
         }
     }

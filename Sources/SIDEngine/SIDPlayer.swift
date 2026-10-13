@@ -71,6 +71,26 @@ public final class SIDPlayer: @unchecked Sendable {
     private let _vizEnabled = AtomicBool(true)
 
     private let av = AVAudioEngine()
+
+    /// Centre frequencies of the equaliser's ten bands (Winamp's set).
+    public static let equalizerFrequencies: [Float] = [60, 170, 310, 600, 1_000, 3_000, 6_000, 12_000, 14_000, 16_000]
+
+    /// Ten-band equaliser between the source node and the mixer. Bypassed —
+    /// a straight wire — until `setEqualizer` switches it on, so playback is
+    /// unchanged for anyone who never touches it. It sits after the viz tap:
+    /// the visualizers keep showing what the SID produced.
+    private let equalizer: AVAudioUnitEQ = {
+        let unit = AVAudioUnitEQ(numberOfBands: SIDPlayer.equalizerFrequencies.count)
+        for (band, frequency) in zip(unit.bands, SIDPlayer.equalizerFrequencies) {
+            band.filterType = .parametric
+            band.frequency = frequency
+            band.bandwidth = 1.0        // octaves
+            band.gain = 0
+            band.bypass = false
+        }
+        unit.bypass = true
+        return unit
+    }()
     private var sourceNode: AVAudioSourceNode?
     /// Pre-allocated scratch buffer for the audio render callback. Sized to
     /// `ringCapacity` so any plausible `frameCount` fits without realloc on
@@ -236,6 +256,17 @@ public final class SIDPlayer: @unchecked Sendable {
     }
     public var volume: Float { av.mainMixerNode.outputVolume }
 
+    /// Gains are in dB. `bandsDB` follows `equalizerFrequencies`; values
+    /// beyond the ten bands are ignored. Main thread; safe while playing
+    /// (the unit's parameters are thread-safe).
+    public func setEqualizer(enabled: Bool, preampDB: Float, bandsDB: [Float]) {
+        equalizer.globalGain = max(-24, min(24, preampDB))
+        for (band, gain) in zip(equalizer.bands, bandsDB) {
+            band.gain = max(-24, min(24, gain))
+        }
+        equalizer.bypass = !enabled
+    }
+
     public func nextSong() throws {
         stopProducer()
         ring.clear()
@@ -350,7 +381,9 @@ public final class SIDPlayer: @unchecked Sendable {
             return noErr
         }
         av.attach(node)
-        av.connect(node, to: av.mainMixerNode, format: format)
+        av.attach(equalizer)
+        av.connect(node, to: equalizer, format: format)
+        av.connect(equalizer, to: av.mainMixerNode, format: format)
         sourceNode = node
     }
 

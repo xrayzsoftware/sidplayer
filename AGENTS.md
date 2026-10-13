@@ -63,6 +63,13 @@ sidplayer/
 │   │   ├── HVSCIndexer.swift    # Walks HVSC tree, parses headers, upserts into DB
 │   │   ├── HVSCSource.swift     # Represents a local HVSC installation
 │   │   └── STIL.swift           # STIL (SID Tune Information List) parser
+│   ├── WinampSkin/          # Classic Winamp skin support (no audio/catalog dependency)
+│   │   ├── WinampSkin.swift     # .wsz loader: sprite sheets, pledit.txt, viscolor.txt
+│   │   ├── MainWindow.swift     # Main window model, layout, hit-testing and renderer
+│   │   ├── EqualizerWindow.swift # Equaliser model, layout and renderer
+│   │   ├── PlaylistWindow.swift # Playlist model, layout and renderer
+│   │   ├── SkinText.swift       # The skin's 5x6 bitmap font (text.bmp)
+│   │   └── SkinCanvas.swift     # Top-left-origin bitmap canvas the renderers draw on
 │   ├── sidspike/            # CLI spike harness for SIDEngine (debugging only)
 │   └── sidcat/              # CLI tool: catalog search and playback
 ├── App/                     # SwiftUI macOS application
@@ -73,6 +80,11 @@ sidplayer/
 │   ├── TuneItem.swift       # View model wrapping TuneRow for SwiftUI Table
 │   ├── Theme.swift          # AppTheme enum + color definitions
 │   ├── HVSCBookmark.swift   # Security-scoped bookmark persistence (sandbox)
+│   ├── Winamp/
+│   │   ├── WinampWindowController.swift # The borderless Winamp-view window (AppKit)
+│   │   ├── WinampSkinView.swift     # AppState → skin models, drawing, mouse, skin menu
+│   │   ├── WinampAnalyser.swift     # 19-band spectrum for the skin's analyser
+│   │   └── AppState+Winamp.swift    # Skin storage, Winamp-view settings, equaliser settings
 │   └── Views/
 │       ├── BrowseView.swift         # Directory tree browser
 │       ├── FilterBar.swift          # Model/clock/year filter controls
@@ -98,6 +110,7 @@ sidplayer/
 │   ├── SIDEngineTests/
 │   │   ├── PSIDHeaderTests.swift    # Header parsing (magic bytes, field extraction)
 │   │   └── SonglengthsTests.swift   # SONGLENGTHS.md5 parsing
+│   ├── WinampSkinTests/         # Skin loading, hit-testing, rendered-pixel checks
 │   └── SIDCatalogTests/
 │       ├── CatalogDBTests.swift     # DB insert, search, upsert, playlist
 │       └── HVSCIndexerTests.swift   # Synthetic HVSC tree indexing

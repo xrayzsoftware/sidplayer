@@ -2,6 +2,7 @@ import Foundation
 import Observation
 import SIDEngine
 import SIDCatalog
+import WinampSkin
 
 /// Single source of truth for the UI. Owns the player, the catalog, and
 /// the search/queue state. Updates flow MainActor-only.
@@ -66,6 +67,27 @@ public final class AppState {
 
     // MARK: Theme
     public var theme: AppTheme = .systemDefault
+
+    // MARK: Winamp view (methods in Winamp/AppState+Winamp.swift)
+    /// The classic skin the Winamp view draws with; nil until one is loaded.
+    public var winampSkin: WinampSkin?
+    public var winampSkinName: String?
+    /// Skins copied into the app's own folder, by file name.
+    public var winampSkinNames: [String] = []
+    public var winampDoubleSize: Bool = true
+    public var winampShowPlaylist: Bool = true
+    public var winampShowEqualizer: Bool = false
+    /// Window shade: the main window rolled up into its title bar.
+    public var winampShade: Bool = false
+    var didLoadWinampSettings = false
+
+    // MARK: Equaliser (methods in Winamp/AppState+Winamp.swift)
+    /// Applies to local playback only — not to a C64 Ultimate, which makes
+    /// its own sound, nor to WAV export.
+    public var equalizerEnabled: Bool = false
+    public var equalizerPreampDB: Float = 0
+    /// Gain per band in dB, in the order of `SIDPlayer.equalizerFrequencies`.
+    public var equalizerBandsDB: [Float] = Array(repeating: 0, count: SIDPlayer.equalizerFrequencies.count)
     public var showScroller: Bool = true
     public var showVisualizers: Bool = true
 
@@ -358,6 +380,7 @@ public final class AppState {
         player.setVolume(Float(volume))
         wireRemoteCommands()
         loadFavorites()
+        loadEqualizer()
         loadTheme()
         if UserDefaults.standard.object(forKey: Self.scrollerKey) != nil {
             showScroller = UserDefaults.standard.bool(forKey: Self.scrollerKey)
@@ -680,7 +703,7 @@ public final class AppState {
         }
     }
 
-    private func supportDir() -> URL {
+    func supportDir() -> URL {
         let base = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
         let dir = base.appendingPathComponent("sidplayer", isDirectory: true)
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)

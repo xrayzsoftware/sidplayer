@@ -30,6 +30,7 @@ Built on [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) for cycle-
 - **STIL scroller** — HVSC's annotations (sample sources, composer notes, "reused in Wizball" trivia) scroll right-to-left in your theme's accent color, locked to the display refresh.
 - **Subtune navigation** — prev/next always move between tracks; a ‹ › stepper in the transport bar walks a tune's subtunes. Sequential playback auto-advances through every subtune at its song-length end; shuffle plays one subtune per tune.
 - **Play on a C64 Ultimate** — point Settings → Output at a C64 Ultimate (or Ultimate 64) on your network and tunes play on the real machine's SID via the Ultimate firmware's REST API. The Mac keeps the queue, clock, shuffle/repeat and auto-advance; the C64 makes the sound.
+- **Winamp view** — Window → Winamp View opens a classic Winamp 2.x window (main + equaliser + playlist) skinned from any `.wsz` file you load. Transport, volume, shuffle/repeat, the scrolling title, the spectrum analyser, a real ten-band equaliser, window shade and the playlist all work; skins are not bundled.
 - **Persistent volume** — the volume slider restores its last position on launch.
 - **8 VSCode-inspired themes** — System Default, Nord, Tokyo Night, Dracula, Gruvbox Dark, Catppuccin Mocha, Solarized Dark, Monokai. Theme tokens reach the title bar, visualizers, peak gradient, voice colors, scroller text, and chrome.
 

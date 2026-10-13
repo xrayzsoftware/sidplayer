@@ -2,6 +2,12 @@
 
 All notable changes to SID Player. Releases are signed and notarized DMGs for Apple silicon (macOS 14+), attached to each [GitHub release](https://github.com/xrayzsoftware/sidplayer/releases).
 
+## Unreleased
+
+### Added
+- **Winamp view.** Window → Winamp View (⇧⌘W) opens a borderless window drawn from a classic Winamp 2.x skin: the main window with the equaliser and playlist docked underneath. Load any `.wsz` with a click, a drop on the window, or the menu on the skin's top-left button (also on right-click); loaded skins are remembered and listed there. The transport, shuffle, repeat, volume, time (click it for time left), scrolling title, spectrum analyser and playlist are all live; the playlist shows the current list and plays a row on double-click. Double size is on by default. The shade button rolls the main window up into its title bar (time, small transport, position). No skin ships with the app. Not drawn yet: shade mode for the equaliser and playlist, and skins' non-rectangular window shapes. The song position bar shows progress only, because a SID tune cannot be seeked.
+- **Ten-band equaliser.** The Winamp view's EQ button opens the skin's equaliser: preamp and ten bands (60 Hz to 16 kHz, ±12 dB), ON/off, a response curve, and a few presets. It is a real equaliser in the audio path, off by default, and its settings are kept between launches and apply whichever window is in use. It shapes local playback only — not a C64 Ultimate and not WAV export.
+
 ## 0.12 — 2026-10-04
 
 ### Added

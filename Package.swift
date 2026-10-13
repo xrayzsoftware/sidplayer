@@ -12,6 +12,7 @@ let package = Package(
     products: [
         .library(name: "SIDEngine",  targets: ["SIDEngine"]),
         .library(name: "SIDCatalog", targets: ["SIDCatalog"]),
+        .library(name: "WinampSkin", targets: ["WinampSkin"]),
         .executable(name: "sidspike", targets: ["sidspike"]),
         .executable(name: "sidcat",   targets: ["sidcat"]),
     ],
@@ -59,6 +60,15 @@ let package = Package(
             ],
             path: "Sources/SIDCatalog"
         ),
+        // Classic Winamp skin (.wsz) loader and window renderer. No audio or
+        // catalog dependency: it turns a skin plus a plain model into a bitmap.
+        .target(
+            name: "WinampSkin",
+            dependencies: [
+                .product(name: "SWCompression", package: "SWCompression"),
+            ],
+            path: "Sources/WinampSkin"
+        ),
         .executableTarget(
             name: "sidspike",
             dependencies: ["SIDEngine"],
@@ -78,6 +88,11 @@ let package = Package(
             name: "SIDCatalogTests",
             dependencies: ["SIDCatalog"],
             path: "Tests/SIDCatalogTests"
+        ),
+        .testTarget(
+            name: "WinampSkinTests",
+            dependencies: ["WinampSkin"],
+            path: "Tests/WinampSkinTests"
         ),
     ],
     cxxLanguageStandard: .cxx17
