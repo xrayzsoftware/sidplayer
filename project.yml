@@ -51,8 +51,8 @@ targets:
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
         NSLocalNetworkUsageDescription: "SID Player talks to a C64 Ultimate on your network to play tunes on real hardware."
-        CFBundleShortVersionString: "0.12"
-        CFBundleVersion: "12"
+        CFBundleShortVersionString: "0.13"
+        CFBundleVersion: "13"
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.sidplayer.app

@@ -30,7 +30,8 @@ Built on [libsidplayfp](https://github.com/libsidplayfp/libsidplayfp) for cycle-
 - **STIL scroller** — HVSC's annotations (sample sources, composer notes, "reused in Wizball" trivia) scroll right-to-left in your theme's accent color, locked to the display refresh.
 - **Subtune navigation** — prev/next always move between tracks; a ‹ › stepper in the transport bar walks a tune's subtunes. Sequential playback auto-advances through every subtune at its song-length end; shuffle plays one subtune per tune.
 - **Play on a C64 Ultimate** — point Settings → Output at a C64 Ultimate (or Ultimate 64) on your network and tunes play on the real machine's SID via the Ultimate firmware's REST API. The Mac keeps the queue, clock, shuffle/repeat and auto-advance; the C64 makes the sound.
-- **Winamp view** — Window → Winamp View opens a classic Winamp 2.x window (main + equaliser + playlist) skinned from any `.wsz` file you load. Transport, volume, shuffle/repeat, the scrolling title, the spectrum analyser, a real ten-band equaliser, window shade and the playlist all work; skins are not bundled.
+- **Winamp view with real skins** — **Window → Winamp View** (⇧⌘W) opens a borderless window drawn from any classic Winamp 2.x skin (`.wsz`): the main window with the equaliser and playlist docked underneath. Click the empty window, drop a skin on it, or use the menu on the skin's top-left button (also on right-click); loaded skins are remembered and listed there. Transport, shuffle/repeat, volume, the time (click it for time left), the scrolling title, the spectrum analyser in the skin's own colours, window shade and the playlist (double-click to play) are all live. Double size is on by default. No skins are bundled — they are their authors' artwork.
+- **Ten-band equaliser** — the Winamp view's EQ button opens the skin's equaliser: preamp plus ten bands from 60 Hz to 16 kHz (±12 dB), on/off, a response curve and a few presets. It is a real equaliser in the audio path, off by default; its settings persist and apply whichever window you use. Local playback only — not a C64 Ultimate, not WAV export.
 - **Persistent volume** — the volume slider restores its last position on launch.
 - **8 VSCode-inspired themes** — System Default, Nord, Tokyo Night, Dracula, Gruvbox Dark, Catppuccin Mocha, Solarized Dark, Monokai. Theme tokens reach the title bar, visualizers, peak gradient, voice colors, scroller text, and chrome.
 
@@ -100,7 +101,7 @@ The CLIs share the same engine and catalog as the GUI app — useful for headles
 swift test
 ```
 
-41 tests covering PSID/RSID header parsing (incl. v2+ flag bits → clock/model), HVSC `Songlengths.md5` parser (including CRLF + `[Database]` header regression cases), SID register reads, per-tune play counts (ranking + survival across history pruning), and end-to-end indexer behavior against a synthetic HVSC tree.
+79 tests covering PSID/RSID header parsing (incl. v2+ flag bits → clock/model), HVSC `Songlengths.md5` parser (including CRLF + `[Database]` header regression cases), SID register reads, per-tune play counts (ranking + survival across history pruning), end-to-end indexer behavior against a synthetic HVSC tree, and the Winamp skin loader and renderers (each rendered window is checked pixel by pixel against synthetic sprite sheets).
 
 ---
 
@@ -117,6 +118,8 @@ sidplayer/
 │   ├── NowPlayingController.swift    MPNowPlayingInfoCenter + media keys
 │   ├── CSDbService.swift             HVSC path → csdb.dk resolver (cached)
 │   ├── AppIcon.icns                  10-size icon, hand-built via iconutil
+│   ├── Winamp/                       Winamp view (AppKit: borderless window,
+│   │                                 mouse handling, skin menu, EQ settings)
 │   └── Views/                        all subviews
 │       └── Visualizers/              waveform, peak meter, FFT waterfall,
 │                                     phosphor scope, SID register monitor
@@ -146,12 +149,21 @@ sidplayer/
 │   │   ├── HVSCIndexer.swift         Walk → parse → md5 → insert
 │   │   └── STIL.swift                HVSC STIL.txt parser
 │   │
+│   ├── WinampSkin/                   Classic Winamp skins (depends on SWCompression)
+│   │   ├── WinampSkin.swift          .wsz loader: sprite sheets + colour files
+│   │   ├── MainWindow.swift          Main window + shade mode: layout, renderer
+│   │   ├── EqualizerWindow.swift     Equaliser: layout, renderer
+│   │   ├── PlaylistWindow.swift      Playlist: layout, renderer
+│   │   ├── SkinText.swift            The skin's 5x6 bitmap font
+│   │   └── SkinCanvas.swift          Top-left-origin bitmap canvas
+│   │
 │   ├── sidspike/                     CLI: play a single .sid
 │   └── sidcat/                       CLI: catalog management
 │
 └── Tests/                            XCTest suites
     ├── SIDEngineTests/               PSID + Songlengths parsers
-    └── SIDCatalogTests/              CatalogDB + Indexer end-to-end
+    ├── SIDCatalogTests/              CatalogDB + Indexer end-to-end
+    └── WinampSkinTests/              Skin loading, hit-testing, rendered pixels
 ```
 
 ### Audio path
@@ -181,6 +193,7 @@ sidplayer/
                                         └────────────────────┘
 ```
 
+- The source node feeds a ten-band `AVAudioUnitEQ` on its way to the mixer. The unit is bypassed until the equaliser is switched on, and sits after the viz tap, so the visualizers always show what the SID produced
 - Main libsidplayfp engine drives the audible mix
 - Three additional engines run the same tune with two voices muted each, in lockstep, feeding the per-voice waveform display
 - Ring buffer is 4 096 samples (~93 ms at 44.1 kHz) — small enough that visual lag is imperceptible, large enough that the producer thread can keep up
@@ -196,6 +209,7 @@ libsidplayfp is C++. Swift can't import C++ directly with full fidelity (no clas
 
 - **Distribution license:** libsidplayfp is GPLv2 and is statically linked into the app. Any distributed binary is therefore GPL. Fine for a personal build; matters if you ever want to ship commercially. The bundled license sits at `Sources/CSIDEngine/Vendor/LICENSE.libsidplayfp`.
 - **arm64 only by default.** The vendored libsidplayfp archive is arm64; producing a universal app requires lipo'ing in an x86_64 build (see Universal binary section above).
+- **Winamp view:** only the main window has a shade mode; skins' non-rectangular window shapes (`region.txt`) and cursors are ignored; the playlist is a fixed 13 rows; the equaliser's AUTO button does nothing; modern (`.wal`) skins are not supported. The position bar shows progress only — a SID tune cannot be seeked.
 - **Title-bar text contrast** on lighter themes (Solarized Light, etc.) can be off — macOS computes the title color from the window appearance rather than your theme palette.
 
 ---
