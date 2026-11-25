@@ -2,6 +2,31 @@
 
 All notable changes to SID Player. Releases are signed and notarized DMGs for Apple silicon (macOS 14+), attached to each [GitHub release](https://github.com/xrayzsoftware/sidplayer/releases).
 
+## 0.14 — 2026-11-25
+
+Third stability pass: fixes from a full code review.
+
+### Fixed
+- **Crash when changing an emulation setting** — changing the SID model, engine, clock, sampling, DigiBoost or a filter curve after a tune had played could crash the app or corrupt memory (the previous SID emulation was freed while still in use).
+- **A missing file no longer blocks the queue** — auto-advance and Next retried the same missing tune for ever. They now move past it, and auto-advance stops after ten entries in a row that will not start (an unplugged HVSC drive, an unreachable C64).
+- **Stop is final** — pressing Stop just after picking a tune, or while a tune was uploading to a C64 Ultimate, could still start it.
+- **C64 Ultimate** — auto-advance sent the next tune again on every tick while its upload was in flight, ten times a second, and none was ever accepted. A failed or overtaken upload could mark playback stopped while the C64 played on. After switching the output target, Play resumed the wrong tune or nothing; switching now clears the current tune.
+- **MIDI export of multi-speed tunes** — tunes that call their player more than once per frame were sampled at the frame rate and lost notes. The play rate is now measured from the tune itself and the registers are read on a much finer grid. Tunes driven by a CIA timer, 60 Hz tunes on PAL included, may export with more notes than before; export takes about a tenth longer.
+- **MIDI export** now follows a forced PAL/NTSC clock setting.
+- **Setup screen over a working library** — after a failed re-index, a failed download or a wrong folder pick, an empty tab or a search with no results replaced the whole player with the first-run screen.
+- **Download HVSC after choosing a folder** — the app went back to the old folder on the next launch.
+- **Search** ran a full catalog query on every keystroke; the pause before searching did nothing.
+- **Year filter** listed tunes with unknown years ("19??", "198?") among the early ones.
+- **Playlists holding the same tune twice** sent playback round in a loop, and "Remove from Playlist" removed the wrong entry. A playlist now holds each tune once; repeats in existing playlists are removed, keeping the first, when the catalog is next opened.
+- **Now Playing** in Control Center showed the previous tune's elapsed time on each new track.
+- **Changing the audio output device** mid-tune (headphones, AirPods, a display) left playback silent with a frozen clock. The audio engine is now restarted.
+- **Per-voice scopes** showed an earlier part of the tune after the visualizers were hidden and shown again.
+- A rare dropped audio buffer, when the output and the emulator reached for the same buffer at the same moment, is now much less likely.
+- "UP NEXT" showed the next subtune under shuffle, when a random tune plays next.
+- The Winamp view's playlist scrolled a row per trackpad event, however slight the gesture.
+- Opening the Mini Player no longer hides the Winamp view.
+- Errors from creating, renaming or editing a playlist are shown instead of ignored.
+
 ## 0.13 — 2026-10-13
 
 ### Added
