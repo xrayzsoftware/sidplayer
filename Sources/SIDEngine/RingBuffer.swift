@@ -54,12 +54,22 @@ public final class RingBuffer: @unchecked Sendable {
         return readLocked(dst, count: n)
     }
 
-    /// Non-blocking read for the real-time audio thread. If the producer
-    /// holds the lock right now, returns 0 immediately (caller outputs
-    /// silence for the cycle) instead of blocking a Core Audio callback.
+    /// Non-blocking read for the real-time audio thread: it never waits on
+    /// the lock, so a Core Audio callback can't be held up by the producer.
+    ///
+    /// The producer holds the lock for about a microsecond at a time (one
+    /// chunk copy), so a lock found taken is nearly always free again at
+    /// once — and giving the read up costs a whole buffer of silence, an
+    /// audible gap. So it tries again for a few tens of microseconds before
+    /// it returns 0. That narrows the gap rather than closing it: a producer
+    /// descheduled while it holds the lock still costs the cycle.
     @discardableResult
     public func tryRead(_ dst: UnsafeMutablePointer<Int16>, count n: Int) -> Int {
-        guard lock.lockIfAvailable() else { return 0 }
+        var attempts = 0
+        while !lock.lockIfAvailable() {
+            attempts += 1
+            if attempts == 10_000 { return 0 }
+        }
         defer { lock.unlock() }
         return readLocked(dst, count: n)
     }

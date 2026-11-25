@@ -159,6 +159,15 @@ final class SIDNoteTracker {
 
 // MARK: - Export entry point
 
+/// C64 cycles the emulator runs between two looks at the registers: about a
+/// tenth of a millisecond, and of the shortest play period handled.
+private let registerQuantumCycles = 100
+
+/// How much of a tune `measurePlaySpeed` listens to. Across a sample of HVSC,
+/// five seconds gave the same answer as twenty for all but about one in
+/// seventeen of the tunes it applies to; ten leaves a margin.
+private let speedProbeMs = 10_000
+
 /// Renders one subtune of a SID file headlessly and writes a Standard MIDI File
 /// (format 1) transcription of its register activity. All inputs are value
 /// types, so this is safe to run on a detached Task alongside live playback.
@@ -191,20 +200,38 @@ public func exportSIDToMIDI(
     try engine.start(song: song, sampleRate: sampleRate)
 
     let info = engine.info
-    let isNTSC = info?.clock == .ntsc
+    // The clock the emulation runs at: a forced setting overrides the tune's.
+    let isNTSC: Bool
+    switch config.clock {
+    case .ntsc: isNTSC = true
+    case .pal:  isNTSC = false
+    case .auto: isNTSC = info?.clock == .ntsc
+    }
     let clock: SIDRegisters.Clock = isNTSC ? .ntsc : .pal
     let frameHz = isNTSC ? 60.0 : 50.0
-    // Sample registers at the tune's actual play rate so every play-call (and
-    // thus every arpeggio step) is captured.
-    let playRateHz = frameHz * Double(engine.playSpeedMultiplier())
-    // The bridge advances the emulator in fixed-cycle refills; if one refill
-    // spans more than a play frame, consecutive register snapshots read the
-    // same image and every intervening play call (arpeggio step) is lost.
-    // Keep a refill to at most half a play frame.
-    let cpuHz = isNTSC ? 1_022_730.0 : 985_248.0
-    engine.renderQuantumCycles = max(500, Int(cpuHz / playRateHz / 2))
+
     let chips = max(1, info?.sidChips ?? 1)
     let voiceCount = chips * 3
+
+    // Sample registers at the tune's actual play rate so every play-call (and
+    // thus every arpeggio step) is captured. A PSID marked as VBI-timed is
+    // called once per video frame by definition; anything else sets its own
+    // pace, which has to be measured — and measuring runs the tune, so start
+    // it over afterwards for the transcription to begin at the first frame.
+    var speed = 1
+    let header = try? PSIDHeader(contentsOf: URL(fileURLWithPath: path))
+    if header?.isVBITimed(song: song) != true {
+        speed = measurePlaySpeed(engine: engine, chips: chips, frameHz: frameHz,
+                                 sampleRate: sampleRate, probeMs: min(durationMs, speedProbeMs))
+        try engine.start(song: song, sampleRate: sampleRate)
+    }
+    let playRateHz = frameHz * Double(speed)
+    // The bridge advances the emulator in fixed-cycle refills, and the
+    // registers can only be read between two of them: a snapshot is that
+    // much late. With refills half a play frame long the snapshots wandered
+    // against the play calls, so that every third or fourth call of a
+    // multi-speed tune fell between two snapshots that both missed it.
+    engine.renderQuantumCycles = registerQuantumCycles
 
     let totalFrames = Int((Double(durationMs) / 1000.0 * playRateHz).rounded())
     guard totalFrames > 0 else { throw ExportError.zeroDuration }
@@ -238,13 +265,7 @@ public func exportSIDToMIDI(
             want -= got
         }
 
-        var voices: [SIDRegisters.Voice] = []
-        voices.reserveCapacity(voiceCount)
-        for c in 0..<chips {
-            let image = engine.readRegisters(sid: c) ?? [UInt8](repeating: 0, count: 32)
-            voices.append(contentsOf: SIDRegisters(image: image).voices)
-        }
-        tracker.step(frame: f, voices: voices)
+        tracker.step(frame: f, voices: currentVoices(of: engine, chips: chips))
     }
     tracker.finish(endFrame: totalFrames)
 
@@ -252,6 +273,117 @@ public func exportSIDToMIDI(
     let data = buildSMF(notes: tracker.notes, voiceCount: voiceCount,
                         programs: programs, playRateHz: playRateHz)
     try data.write(to: destination, options: .atomic)
+}
+
+/// Every SID voice's decoded registers as they stand now, chip-major.
+private func currentVoices(of engine: SIDPlayerEngine, chips: Int) -> [SIDRegisters.Voice] {
+    var voices: [SIDRegisters.Voice] = []
+    voices.reserveCapacity(chips * 3)
+    for c in 0..<chips {
+        let image = engine.readRegisters(sid: c) ?? [UInt8](repeating: 0, count: 32)
+        voices.append(contentsOf: SIDRegisters(image: image).voices)
+    }
+    return voices
+}
+
+// MARK: - Play rate
+
+/// Finds how often a tune updates its voices, as a multiple of the video
+/// frame rate: 1 for an ordinary tune; 2, 4, 8 or 16 for a multi-speed one.
+///
+/// A tune that isn't tied to the frame interrupt calls its play routine from
+/// a CIA timer it programs itself, and libsidplayfp offers no way to ask for
+/// that period: its timer read is a counter refreshed only when the tune
+/// writes the timer — close to the period for a tune that rewrites it on
+/// every call, and stale for one that sets it once in its init routine.
+///
+/// So this measures. It runs the first `probeMs` of the tune, noting — far
+/// more often than any play routine runs — each moment a pitch or control
+/// register changes, and looks for the rhythm in those moments: the shortest
+/// interval that keeps recurring in step with itself. Changes a single call
+/// makes a millisecond or two apart do not recur that way, and a tune that
+/// leaves its registers alone for a while does not hide the interval at which
+/// it changes them when it does.
+///
+/// The engine must have just been started; the caller restarts it afterwards.
+func measurePlaySpeed(engine: SIDPlayerEngine, chips: Int, frameHz: Double,
+                      sampleRate: Int, probeMs: Int) -> Int {
+    // Steps of about 0.1 ms: well inside one call's burst of register writes.
+    engine.renderQuantumCycles = registerQuantumCycles
+    let step = max(1, sampleRate / 8000)
+    let steps = sampleRate / 1000 * probeMs / step
+    let stepMs = Double(step) * 1000 / Double(sampleRate)
+    let scratch = UnsafeMutablePointer<Int16>.allocate(capacity: step)
+    defer { scratch.deallocate() }
+
+    var changes: [Int] = []
+    var previous: [UInt8]?
+    probe: for f in 0..<steps {
+        var want = step
+        while want > 0 {
+            let got = engine.render(into: scratch, count: want)
+            if got <= 0 { break probe }   // a stalled tune is reported by the export loop
+            want -= got
+        }
+        var now: [UInt8] = []
+        for c in 0..<chips {
+            let image = engine.readRegisters(sid: c) ?? [UInt8](repeating: 0, count: 32)
+            for voice in 0..<3 { now += [image[voice * 7], image[voice * 7 + 1], image[voice * 7 + 4]] }
+        }
+        if let previous, previous != now { changes.append(f) }
+        previous = now
+    }
+    return playSpeed(changeSteps: changes, stepMs: stepMs, frameHz: frameHz)
+}
+
+/// The arithmetic of `measurePlaySpeed`, on the steps at which a register
+/// changed. `stepMs` is the length of one step.
+func playSpeed(changeSteps: [Int], stepMs: Double, frameHz: Double) -> Int {
+    // Periods from 16x of a 60 Hz frame up to a slow single-speed tune, and
+    // each one's first five multiples.
+    let shortest = Int((1.0 / stepMs).rounded(.up))
+    let longest = Int((25.0 / stepMs).rounded())
+    let harmonics = 5
+    let reach = longest * harmonics * 11 / 10 + 2
+
+    // How many pairs of changes lie each distance apart.
+    var pairs = [Int](repeating: 0, count: reach + 1)
+    for (i, earlier) in changeSteps.enumerated() {
+        for later in changeSteps[(i + 1)...] {
+            let distance = later - earlier
+            if distance > reach { break }
+            pairs[distance] += 1
+        }
+    }
+    // Pairs about `distance` apart: within a twelfth of it, since a tune's
+    // calls land a little early or late, or three steps for short distances.
+    func near(_ distance: Int) -> Int {
+        let slack = max(3, distance / 12)
+        return pairs[max(1, distance - slack)...min(reach, distance + slack)].reduce(0, +)
+    }
+
+    let strongest = (shortest...longest).map(near).max() ?? 0
+    guard strongest >= 20 else { return 1 }   // too little going on to tell
+
+    // The play period: the shortest distance that is common and whose
+    // multiples are at least half as common — the next call, and the ones
+    // after it.
+    let period = (shortest...longest).first { distance in
+        let count = near(distance)
+        guard count * 4 >= strongest else { return false }
+        return (2...harmonics).allSatisfy { near(distance * $0) * 2 >= count }
+    }
+    guard let period else { return 1 }
+
+    // Sharpen it to the busiest distance near the one found, then pick the
+    // slowest sampling that keeps up, allowing a tenth.
+    let slack = max(3, period / 12)
+    let best = (max(shortest, period - slack)...(period + slack)).max { pairs[$0] < pairs[$1] } ?? period
+    let rate = 1000 / (Double(best) * stepMs)
+    for speed in [1, 2, 4, 8] where frameHz * Double(speed) >= rate * 0.9 {
+        return speed
+    }
+    return 16
 }
 
 // MARK: - Standard MIDI File writer

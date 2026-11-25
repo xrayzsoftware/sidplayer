@@ -212,7 +212,7 @@ static NSError *makeError(NSString *msg) {
     }
 
     // (Re)create the SID emulation builder for the selected engine. The
-    // previous builder stays alive until engine->config() below has released
+    // previous builder stays alive until engine->load() below has released
     // its SIDs; freeing it earlier would dangle the engine's locked emus.
     sidbuilder *oldBuilder = _builder;
     if (_useReSIDfp) {
@@ -257,14 +257,17 @@ static NSError *makeError(NSString *msg) {
         return NO;   // leak oldBuilder on the rare config failure: the engine's
                      // SID references are unchanged, so freeing it could dangle.
     }
-    // config() succeeded — old SIDs released, new ones locked. Free the old.
-    delete oldBuilder;
+    // config() swaps SIDs only while a tune is attached, and loadTuneAtPath:
+    // detaches it — so after a reload the engine still holds the old
+    // builder's SIDs here. load() is what always releases them and locks the
+    // new builder's; only then is the old builder free to go.
     if (!_engine->load(_tune)) {
         [self discardScratch];
         _configured = NO;
         if (error) *error = makeError(@(_engine->error() ?: "engine load failed"));
-        return NO;
+        return NO;   // leak oldBuilder here too, for the same reason as above.
     }
+    delete oldBuilder;
     _engine->initMixer(false);  // mono
 
     [self discardScratch];
@@ -319,11 +322,6 @@ static NSError *makeError(NSString *msg) {
     if (!_engine || voice < 0 || voice > 2) return;
     // libsidplayfp's mute(): enable=true unmutes, enable=false mutes.
     _engine->mute(0, (unsigned)voice, !muted);
-}
-
-- (NSInteger)cia1TimerA {
-    if (!_engine) return 0;
-    return (NSInteger)_engine->getCia1TimerA();
 }
 
 - (BOOL)readRegisters:(uint8_t *)outRegs forSID:(NSInteger)sidNum {

@@ -45,12 +45,19 @@ xcodebuild \
     build \
     | tail -3
 
-# Locate the built .app.
-BUILT_APP=$(find "$HOME/Library/Developer/Xcode/DerivedData" \
-    -path "*Release*${APP_NAME}.app" -type d -print -quit 2>/dev/null)
+# Ask xcodebuild where this project's Release product is. Searching all of
+# DerivedData for the app's name could pick up a stale build from another
+# checkout of the project — and sign and ship that.
+BUILT_APP="$(xcodebuild \
+    -project "$PROJECT" \
+    -scheme "$SCHEME" \
+    -configuration Release \
+    -destination 'platform=macOS' \
+    -showBuildSettings 2>/dev/null \
+    | sed -n 's/^ *BUILT_PRODUCTS_DIR = //p' | head -1)/${APP_NAME}.app"
 
-if [[ -z "${BUILT_APP}" ]]; then
-    echo "✗ Couldn't find the built .app under DerivedData."
+if [[ ! -d "${BUILT_APP}" ]]; then
+    echo "✗ Couldn't find the built .app at ${BUILT_APP}."
     exit 1
 fi
 

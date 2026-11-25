@@ -190,9 +190,6 @@ public final class SIDPlayerEngine {
         bridge.setVoiceMuted(voice, muted: muted)
     }
 
-    /// Raw CIA1 Timer A value programmed by the tune (0 if VBI / not set yet).
-    public var cia1TimerA: Int { bridge.cia1TimerA() }
-
     /// C64 cycles advanced per internal render refill. Lower it when register
     /// snapshots must not straddle a play call (see SIDMIDIExporter).
     public var renderQuantumCycles: Int {
@@ -216,27 +213,6 @@ public final class SIDPlayerEngine {
     /// to clear (uses internal fallback patches; some tunes will still fail).
     public func setROMs(kernal: Data?, basic: Data?, chargen: Data?) {
         bridge.setKernalROM(kernal, basicROM: basic, chargenROM: chargen)
-    }
-
-    /// Computes the play-rate multiplier relative to the video frame rate.
-    /// VBI-driven tunes return 1; CIA-driven tunes return 2, 4, etc.
-    public func playSpeedMultiplier() -> Int {
-        let cia = bridge.cia1TimerA()
-        guard cia > 0 else { return 1 }
-        let info = self.info
-        let cpuHz: Double = info?.clock == .ntsc ? 1_022_730 : 985_248
-        let frameHz: Double = info?.clock == .ntsc ? 60 : 50
-        let playFreq = cpuHz / Double(cia + 1)
-        let raw = playFreq / frameHz
-        // Snap to the nearest power-of-two-ish that SID composers actually use.
-        if raw < 1.5 { return 1 }
-        if raw < 3.0 { return 2 }
-        if raw < 6.0 { return 4 }
-        if raw < 12.0 { return 8 }
-        // Digi/sample players program CIA timers in the kHz range; treating
-        // that as a play-rate multiplier makes the MIDI exporter iterate
-        // millions of frames. Nothing musical runs faster than 16× frame rate.
-        return min(Int(raw.rounded()), 16)
     }
 
     public func stop() {

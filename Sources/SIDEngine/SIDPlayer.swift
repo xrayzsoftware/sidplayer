@@ -104,7 +104,18 @@ public final class SIDPlayer: @unchecked Sendable {
     private let paused = AtomicBool(true)
     /// Playback clock published by the producer thread (see `currentTime`).
     private let timeLatch = AtomicDouble(0)
+    /// Frames the voice engines are behind the audible one: they are not
+    /// rendered while the visualizers are hidden. The producer thread owns
+    /// this while it runs; the main thread zeroes it wherever it restarts
+    /// all four engines together (always with the producer stopped).
+    private var voiceLagFrames = 0
+    private var configObserver: NSObjectProtocol?
     private(set) var loadedPath: String?
+
+    /// Called on the main thread when the output device went away mid-tune
+    /// and the audio engine could not be restarted on another one. Playback
+    /// has been paused by then.
+    public var onOutputLost: ((Error) -> Void)?
 
     /// Emulation settings. Applied to all engines on the next load() or
     /// reloadCurrentTune() call — never while the producer thread is running.
@@ -119,6 +130,9 @@ public final class SIDPlayer: @unchecked Sendable {
         self.voiceEngines  = (0..<3).map { _ in SIDPlayerEngine() }
         self.voiceTaps     = (0..<3).map { _ in VizTap(capacity: 8192) }
         loadBundledROMs()
+        configObserver = NotificationCenter.default.addObserver(
+            forName: .AVAudioEngineConfigurationChange, object: av, queue: .main
+        ) { [weak self] _ in self?.outputConfigurationChanged() }
     }
 
     /// Loads ROMs from the main bundle and feeds them to all engines.
@@ -132,6 +146,7 @@ public final class SIDPlayer: @unchecked Sendable {
     }
 
     deinit {
+        if let configObserver { NotificationCenter.default.removeObserver(configObserver) }
         stop()
         if let s = renderScratch {
             s.deallocate()
@@ -193,6 +208,7 @@ public final class SIDPlayer: @unchecked Sendable {
                 // ignore — viz only
             }
         }
+        voiceLagFrames = 0
     }
 
     public func play() throws {
@@ -233,6 +249,22 @@ public final class SIDPlayer: @unchecked Sendable {
         paused.set(true)
         stopProducer()
         syncTimeLatch()
+    }
+
+    /// AVAudioEngine stops itself when the output device or its format
+    /// changes (headphones plugged in, AirPods connected, a display with
+    /// speakers removed). Nothing else restarts it: the producer would fill
+    /// the ring and wait, leaving a silent tune "playing" with a frozen clock.
+    private func outputConfigurationChanged() {
+        guard !paused.get, !av.isRunning else { return }
+        do {
+            try av.start()
+        } catch {
+            // No usable output device. Pause rather than report "playing"
+            // over silence; play() starts the engine again once there is one.
+            pause()
+            onOutputLost?(error)
+        }
     }
 
     public func stop() {
@@ -320,6 +352,7 @@ public final class SIDPlayer: @unchecked Sendable {
             try? ve.start(song: song, sampleRate: Int(sampleRate))
             for v in 0..<3 { ve.setVoiceMuted(v, muted: v != i) }
         }
+        voiceLagFrames = 0
         syncTimeLatch()
         if wasPlaying { try play() }
     }
@@ -339,6 +372,7 @@ public final class SIDPlayer: @unchecked Sendable {
             try? ve.select(song: song)
             for v in 0..<3 { ve.setVoiceMuted(v, muted: v != i) }
         }
+        voiceLagFrames = 0
     }
 
     // MARK: - Audio graph
@@ -425,7 +459,12 @@ public final class SIDPlayer: @unchecked Sendable {
 
         while !producerStop.get {
             if ring.freeSpace < chunk {
-                Thread.sleep(forTimeInterval: 0.002)
+                // Nothing to render until the output drains the ring. Use the
+                // wait to bring lagging voice engines level, a chunk at a
+                // time so the ring is looked at again in between.
+                if !catchUpVoiceEngines(voiceScratch, chunk: chunk) {
+                    Thread.sleep(forTimeInterval: 0.002)
+                }
                 continue
             }
             let n = engine.render(into: scratch, count: chunk)
@@ -440,8 +479,11 @@ public final class SIDPlayer: @unchecked Sendable {
             // Drive voice engines for the same N samples, then fill voice taps
             // directly. Failures here are silently ignored — they're viz only,
             // they cannot stall the audio ring write below. Skipped entirely
-            // when visualizers are off, saving the per-engine CPU cost.
-            if _vizEnabled.get {
+            // when visualizers are off, saving the per-engine CPU cost — at
+            // the price of the voice engines falling behind, which is made up
+            // (see catchUpVoiceEngines) before they feed the scopes again.
+            let vizOn = _vizEnabled.get
+            if vizOn && voiceLagFrames == 0 {
                 for (i, ve) in voiceEngines.enumerated() {
                     let m = ve.render(into: voiceScratch[i], count: n)
                     // Non-blocking: these writes precede the audio ring fill
@@ -450,6 +492,10 @@ public final class SIDPlayer: @unchecked Sendable {
                     // chunk is invisible; a stalled ring is audible.
                     if m > 0 { voiceTaps[i].tryAppend(voiceScratch[i], count: m) }
                 }
+            } else {
+                voiceLagFrames += n
+            }
+            if vizOn {
                 // Publish the main engine's register image for the register
                 // monitor. One getSidStatus call per chunk (~43 Hz) — negligible,
                 // and gated with the voice scopes since the slot is hidden when
@@ -468,5 +514,19 @@ public final class SIDPlayer: @unchecked Sendable {
                 if w == 0 { Thread.sleep(forTimeInterval: 0.001) }
             }
         }
+    }
+
+    /// Renders and discards one chunk of backlog on each voice engine, so the
+    /// per-voice scopes show the part of the tune that is playing — not the
+    /// part that was playing when the visualizers were hidden. Returns false
+    /// when there is nothing to make up. Producer thread only.
+    private func catchUpVoiceEngines(_ scratch: [UnsafeMutablePointer<Int16>], chunk: Int) -> Bool {
+        guard voiceLagFrames > 0, _vizEnabled.get else { return false }
+        let step = min(chunk, voiceLagFrames)
+        for (i, ve) in voiceEngines.enumerated() {
+            _ = ve.render(into: scratch[i], count: step)
+        }
+        voiceLagFrames -= step
+        return true
     }
 }

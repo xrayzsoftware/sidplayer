@@ -1,4 +1,5 @@
 import XCTest
+import GRDB
 @testable import SIDCatalog
 
 final class CatalogDBTests: XCTestCase {
@@ -176,6 +177,86 @@ final class CatalogDBTests: XCTestCase {
         XCTAssertEqual(try db.count(), 2)
         XCTAssertEqual(try db.tune(id: ids[0])?.title, "A2")
         XCTAssertEqual(try db.lengths(tuneId: ids[0]).map(\.durationMs), [11_000])
+    }
+
+    // MARK: - Year filter
+
+    /// HVSC writes an unknown year as "19??" or "198?". Those must not pass a
+    /// year filter: read as numbers they are 19 and 198, below any "to" year,
+    /// and every undated tune used to be listed among the early ones.
+    func testYearFilterLeavesOutUnknownYears() throws {
+        let db = try CatalogDB()
+        func add(_ path: String, released: String?) throws {
+            var row = makeRow(path: path, title: path, author: "A")
+            row.released = released
+            _ = try db.insert(tune: row, lengths: [])
+        }
+        try add("y1984.sid", released: "1984 Elite")
+        try add("y1990.sid", released: "1990 Ocean")
+        try add("unknown-century.sid", released: "19?? Unknown")
+        try add("unknown-decade.sid", released: "198? Unknown")
+        try add("no-year.sid", released: nil)
+
+        var to1985 = CatalogDB.SearchFilters()
+        to1985.yearTo = 1985
+        XCTAssertEqual(try db.search("", filters: to1985).map(\.path), ["y1984.sid"])
+
+        var from1985 = CatalogDB.SearchFilters()
+        from1985.yearFrom = 1985
+        XCTAssertEqual(try db.search("", filters: from1985).map(\.path), ["y1990.sid"])
+    }
+
+    // MARK: - Playlists hold a tune once
+
+    /// Rows, selection and the play queue identify a track by its tune id, so
+    /// a playlist cannot hold the same tune twice: from the second copy,
+    /// "next" resolved to the entry after the first and playback went round
+    /// in a loop without reaching the rest of the list.
+    func testAddingATuneAlreadyInThePlaylistIsANoOp() throws {
+        let db = try CatalogDB()
+        let a = try db.insert(tune: makeRow(path: "a.sid", title: "A", author: "X"), lengths: [])
+        let b = try db.insert(tune: makeRow(path: "b.sid", title: "B", author: "X"), lengths: [])
+        let playlist = try XCTUnwrap(try db.createPlaylist(name: "P").id)
+
+        try db.addToPlaylist(playlistId: playlist, tuneId: a)
+        try db.addToPlaylist(playlistId: playlist, tuneId: b)
+        try db.addToPlaylist(playlistId: playlist, tuneId: a)
+
+        XCTAssertEqual(try db.playlistTracks(id: playlist).map(\.id), [a, b],
+                       "the tune keeps its first position and is not added again")
+
+        // The same tune in another playlist is a different matter.
+        let other = try XCTUnwrap(try db.createPlaylist(name: "Q").id)
+        try db.addToPlaylist(playlistId: other, tuneId: a)
+        XCTAssertEqual(try db.playlistTracks(id: other).map(\.id), [a])
+    }
+
+    /// Playlists saved by earlier versions may already hold repeats. Opening
+    /// the catalog must leave each tune once, at its first position, with the
+    /// positions dense again — "remove" addresses a track by position.
+    func testOpeningACatalogRemovesRepeatsFromExistingPlaylists() throws {
+        let queue = try DatabaseQueue()
+        try CatalogDB.migrator.migrate(queue, upTo: "v4_play_counts")
+        try queue.write { db in
+            for path in ["a.sid", "b.sid", "c.sid"] {
+                var row = makeRow(path: path, title: path, author: "X")
+                try row.insert(db)
+            }
+            try db.execute(sql: "INSERT INTO playlists (id, name, createdAt) VALUES (1, 'P', '2026-01-01')")
+            // a b a c b  ->  a b c
+            for (position, tune) in [1, 2, 1, 3, 2].enumerated() {
+                try db.execute(sql: "INSERT INTO playlist_tracks (playlistId, position, tuneId) VALUES (1, ?, ?)",
+                               arguments: [position, tune])
+            }
+        }
+
+        let db = try CatalogDB(dbWriter: queue)
+
+        XCTAssertEqual(try db.playlistTracks(id: 1).map(\.path), ["a.sid", "b.sid", "c.sid"])
+        let positions = try queue.read { db in
+            try Int.fetchAll(db, sql: "SELECT position FROM playlist_tracks WHERE playlistId = 1 ORDER BY position")
+        }
+        XCTAssertEqual(positions, [0, 1, 2])
     }
 
     func testDuplicatePathRejected() throws {

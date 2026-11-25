@@ -28,6 +28,11 @@ public final class AppState {
         }
     }
     public var bootstrap: BootstrapStatus = .notReady
+    /// True once the catalog holds tunes. This decides between the player and
+    /// the first-run screen — not `bootstrap`, which a failed re-index or a
+    /// wrong folder pick leaves at `.error`, nor the visible `rows`, which an
+    /// empty tab or a search with no hits empties.
+    public private(set) var hasLibrary = false
     public var showSettingsSheet: Bool = false
     public var lastError: String?
 
@@ -138,7 +143,15 @@ public final class AppState {
 
     // MARK: Catalog
     public var catalog: CatalogDB?
-    public var hvscSource: HVSCSource?
+    public var hvscSource: HVSCSource? {
+        didSet {
+            // STIL belongs to the tree it was read from. Reload it only if it
+            // had been loaded at all (it is lazy — see below).
+            guard hvscSource != oldValue, stil != nil else { return }
+            stil = nil
+            Task { await ensureSTILLoaded() }
+        }
+    }
     /// Lazily loaded the first time the STIL popover opens.
     public var stil: STIL?
     public var rows: [TuneItem] = []
@@ -155,7 +168,7 @@ public final class AppState {
             guard let id = selectedID, id != oldValue else { return }
             pendingPlay?.cancel()
             if navigatingWithinQueue {
-                Task { await play(tuneID: id) }
+                requestPlay(id)
                 return
             }
             // A user pick from the current view: that view becomes the play
@@ -174,6 +187,18 @@ public final class AppState {
         }
     }
     private var pendingPlay: Task<Void, Never>?
+
+    /// Starts `play(tuneID:)` as the one in-flight play request. A newer
+    /// request, or stop(), cancels it — which also aborts an upload to the
+    /// C64 Ultimate that has not finished.
+    private func requestPlay(_ id: Int64) {
+        pendingPlay?.cancel()
+        pendingPlay = Task { [weak self] in
+            guard !Task.isCancelled, let self else { return }
+            await self.play(tuneID: id)
+        }
+    }
+
     public var sortOrder: [KeyPathComparator<TuneItem>] = [
         KeyPathComparator(\TuneItem.row.author, order: .forward),
         KeyPathComparator(\TuneItem.row.title,  order: .forward),
@@ -335,15 +360,32 @@ public final class AppState {
     /// last pause, plus time since the last resume.
     private var remoteElapsedBase: TimeInterval = 0
     private var remoteResumedAt: Date?
-    /// Bumped per play(tuneID:) so a remote upload that finishes after the user
-    /// has moved on doesn't overwrite the newer track's state.
+    /// Bumped per remote upload and by stop(), so a request that finishes
+    /// after the user has moved on (or stopped) doesn't overwrite newer state.
     private var playGen = 0
+    /// `playGen` of the tune upload or subtune switch now on its way to the
+    /// C64, if any. Auto-advance holds off while one is: the 10 Hz ticker
+    /// would otherwise send another upload every tick until the first returned.
+    private var remotePendingGen: Int?
+    /// Auto-advance steps in a row that started nothing (missing file,
+    /// unreachable C64). See `checkAutoAdvance`.
+    private var failedAdvances = 0
+    private static let maxFailedAdvances = 10
 
     public func setOutputTarget(_ target: OutputTarget) {
         guard target != outputTarget else { return }
         // Stop on the *old* target first so the C64 is reset / the local
         // engine silenced, then switch.
         stop()
+        // The session stays behind with the old target: the new one has not
+        // loaded this tune (the local engine may hold an older one, the C64
+        // none), so Play must not "resume" it there.
+        currentTuneID = nil
+        ultimateTuneData = nil
+        currentSubtune = 1
+        subtuneCount = 1
+        subtuneLengthsMs = []
+        defaultLengthMs = 0
         outputTarget = target
         UserDefaults.standard.set(target.rawValue, forKey: Self.outputTargetKey)
     }
@@ -378,6 +420,9 @@ public final class AppState {
             volume = UserDefaults.standard.double(forKey: Self.volumeKey)
         }
         player.setVolume(Float(volume))
+        player.onOutputLost = { [weak self] error in
+            Task { @MainActor in self?.audioOutputLost(error) }
+        }
         wireRemoteCommands()
         loadFavorites()
         loadEqualizer()
@@ -407,6 +452,16 @@ public final class AppState {
         }
         ultimateHost = UserDefaults.standard.string(forKey: Self.ultimateHostKey) ?? ""
         ultimatePassword = UserDefaults.standard.string(forKey: Self.ultimatePasswordKey) ?? ""
+    }
+
+    /// The audio device went away mid-tune and the engine could not be
+    /// restarted on another one; SIDPlayer has paused itself. Follow it
+    /// rather than show "playing" over silence — Play starts the engine
+    /// again once a device is back.
+    private func audioOutputLost(_ error: Error) {
+        isPlaying = false
+        lastError = "Audio output unavailable: \(error.localizedDescription)"
+        nowPlaying.setPlaying(false, elapsedSec: currentTime)
     }
 
     // MARK: Now Playing / media keys
@@ -596,7 +651,7 @@ public final class AppState {
     }
 
     public func deletePlaylist(_ id: Int64) {
-        try? catalog?.deletePlaylist(id: id)
+        do { try catalog?.deletePlaylist(id: id) } catch { lastError = error.localizedDescription }
         if case .playlist(let cur) = browseMode, cur == id {
             setBrowseMode(.playlists)
         }
@@ -606,12 +661,16 @@ public final class AppState {
     public func renamePlaylist(_ id: Int64, to name: String) {
         let trimmed = name.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return }
-        try? catalog?.renamePlaylist(id: id, name: trimmed)
+        do { try catalog?.renamePlaylist(id: id, name: trimmed) } catch { lastError = error.localizedDescription }
         loadPlaylists()
     }
 
     public func addToPlaylist(playlistID: Int64, tuneID: Int64) {
-        try? catalog?.addToPlaylist(playlistId: playlistID, tuneId: tuneID)
+        do {
+            try catalog?.addToPlaylist(playlistId: playlistID, tuneId: tuneID)
+        } catch {
+            lastError = error.localizedDescription
+        }
         loadPlaylists()
         if case .playlist(let cur) = browseMode, cur == playlistID {
             Task { try? await refreshSearch() }
@@ -621,7 +680,11 @@ public final class AppState {
     /// Remove a tune from the currently-viewed playlist by its row index.
     public func removeFromCurrentPlaylist(at index: Int) {
         guard case .playlist(let pid) = browseMode else { return }
-        try? catalog?.removeFromPlaylist(playlistId: pid, position: index)
+        do {
+            try catalog?.removeFromPlaylist(playlistId: pid, position: index)
+        } catch {
+            lastError = error.localizedDescription
+        }
         loadPlaylists()
         Task { try? await refreshSearch() }
     }
@@ -696,8 +759,9 @@ public final class AppState {
 
             loadPlaylists()
             recentCount = (try? db.recentlyPlayedCount()) ?? 0
+            refreshHasLibrary()
             try await refreshSearch()
-            self.bootstrap = ((try? db.count()) ?? 0) > 0 ? .ready : .notReady
+            self.bootstrap = hasLibrary ? .ready : .notReady
         } catch {
             self.bootstrap = .error(error.localizedDescription)
         }
@@ -739,6 +803,10 @@ public final class AppState {
         ((try? catalog?.count()) ?? 0) > 0 ? .ready : .notReady
     }
 
+    private func refreshHasLibrary() {
+        hasLibrary = ((try? catalog?.count()) ?? 0) > 0
+    }
+
     private func performDownload() async {
         let dest = supportDir().appendingPathComponent("hvsc", isDirectory: true)
         libraryRun &+= 1
@@ -774,7 +842,13 @@ public final class AppState {
                     }
                 }
             }
+            let oldRoot = hvscSource?.root
             self.hvscSource = result.source
+            // The download replaces a folder the user chose earlier. Drop its
+            // bookmark, or the next launch resolves it and goes back to the
+            // old tree while this copy sits unused.
+            HVSCBookmark.clear()
+            if let oldRoot, oldRoot != result.source.root { HVSCBookmark.release(oldRoot) }
             libraryRun &+= 1
             // Not the gated public reindex(): we're still "busy" here, and
             // the gate would silently skip the index the download exists for.
@@ -789,7 +863,14 @@ public final class AppState {
     }
 
     private func performReindex() async {
-        guard let source = hvscSource, let db = catalog else { return }
+        guard let source = hvscSource, let db = catalog else {
+            // Reached after a download when the catalog failed to open at
+            // launch: the download has already put up "indexing", so say why
+            // nothing follows instead of leaving that on screen for good.
+            bootstrap = .error(catalog == nil ? "The catalog database is not open."
+                                              : "No HVSC folder is configured.")
+            return
+        }
         libraryRun &+= 1
         let run = libraryRun
         bootstrap = .indexing(processed: 0, total: nil)
@@ -812,6 +893,7 @@ public final class AppState {
             libraryRun &+= 1
             bootstrap = .error("Re-index failed: \(error.localizedDescription)")
         }
+        refreshHasLibrary()
         // Outside the do/catch: a search failure after a successful index is
         // not a re-index failure and must not drop the app to the error screen.
         do { try await refreshSearch() } catch { lastError = error.localizedDescription }
@@ -913,7 +995,13 @@ public final class AppState {
             loadPlaylists()
 
         case .playlist(let id):
-            let tunes = (try? db.playlistTracks(id: id)) ?? []
+            let tunes: [TuneRow]
+            do {
+                tunes = try db.playlistTracks(id: id)
+            } catch {
+                lastError = error.localizedDescription
+                tunes = []
+            }
             self.rows = tunes.compactMap(TuneItem.init(row:))
             // Preserve playlist order; user-clicked column header sorts apply
             // afterwards via the Table's sortBinding.
@@ -939,11 +1027,13 @@ public final class AppState {
         do {
             guard let row = try db.tune(id: tuneID) else {
                 lastError = "Tune \(tuneID) not in catalog"
+                failedAdvances += 1
                 return
             }
             let abs = source.root.appendingPathComponent(row.path).path
             guard FileManager.default.fileExists(atPath: abs) else {
                 lastError = "File not found at \(abs)"
+                failedAdvances += 1
                 return
             }
             if outputTarget == .ultimate {
@@ -961,12 +1051,21 @@ public final class AppState {
             subtuneLengthsMs = ((try? db.lengths(tuneId: tuneID)) ?? []).map(\.durationMs)
             isPlaying        = true
             lastError        = nil
+            failedAdvances   = 0
+            // The engine clock restarted; publish 0 now rather than the
+            // previous tune's elapsed time against this tune's duration.
+            currentTime = 0
             startTicker()
             try? db.recordPlay(tuneId: tuneID, subtune: player.currentSong)
             recentCount = (try? db.recentlyPlayedCount()) ?? recentCount
             refreshNowPlaying()
         } catch {
             lastError = error.localizedDescription
+            failedAdvances += 1
+            // On the C64 a failed upload changes nothing: it carries on with
+            // whatever it was playing, and the local player — idle in that
+            // mode — says nothing about it.
+            guard outputTarget == .mac else { return }
             // A failed load/play leaves the player stopped (SIDPlayer restores
             // its paused flag on error) — mirror that instead of leaving the
             // old track marked "playing" over silence. The previous tune has
@@ -997,9 +1096,22 @@ public final class AppState {
         let gen = playGen
         // Silence the local engine; the C64 is the one making sound now.
         player.stop()
-        try await client.playSID(data, song: song)
-        // The user may have picked another track while the upload ran.
-        guard gen == playGen else { return }
+        remotePendingGen = gen
+        defer { if remotePendingGen == gen { remotePendingGen = nil } }
+        do {
+            try await client.playSID(data, song: song)
+        } catch {
+            // Cancelled by a newer request or by stop(), or overtaken by a
+            // newer upload: this failure says nothing about what plays now.
+            if Task.isCancelled || gen != playGen { return }
+            throw error
+        }
+        // The user may have picked another track, or stopped, while the
+        // upload ran.
+        guard gen == playGen else {
+            await resetUltimateIfIdle(client)
+            return
+        }
         ultimateTuneData = data
         currentTuneID    = tuneID
         currentSubtune   = song
@@ -1009,6 +1121,7 @@ public final class AppState {
         subtuneLengthsMs = ((try? db.lengths(tuneId: tuneID)) ?? []).map(\.durationMs)
         isPlaying        = true
         lastError        = nil
+        failedAdvances   = 0
         resetRemoteClock(running: true)
         currentTime = 0
         startTicker()
@@ -1021,17 +1134,32 @@ public final class AppState {
     private func selectUltimateSubtune(_ song: Int) async {
         guard let client = ultimate, let data = ultimateTuneData else { return }
         let gen = playGen
+        remotePendingGen = gen
+        defer { if remotePendingGen == gen { remotePendingGen = nil } }
         do {
             try await client.playSID(data, song: song)
-            guard gen == playGen else { return }
+            guard gen == playGen else {
+                await resetUltimateIfIdle(client)
+                return
+            }
             currentSubtune = song
             resetRemoteClock(running: true)
             isPlaying = true
             currentTime = 0
+            failedAdvances = 0
             refreshNowPlaying()
         } catch {
+            guard gen == playGen else { return }
             lastError = error.localizedDescription
+            failedAdvances += 1
         }
+    }
+
+    /// For a remote request that succeeded after it was superseded. A newer
+    /// upload replaces the tune by itself; after stop() nothing does, and the
+    /// C64 would be left playing behind a stopped UI.
+    private func resetUltimateIfIdle(_ client: UltimateClient) async {
+        if isStopped && remotePendingGen == nil { try? await client.reset() }
     }
 
     public func togglePlayPause() {
@@ -1079,17 +1207,24 @@ public final class AppState {
             isPlaying = true
             if wasStopped { startTicker() }
             refreshNowPlaying()
+            let gen = playGen
             Task {
                 do {
                     // After stop() the machine was reset, so resume by
                     // re-posting the tune rather than releasing the DMA line.
                     if wasStopped, let data = ultimateTuneData {
                         try await client.playSID(data, song: currentSubtune)
+                        // Stopped again, or another tune picked, meanwhile.
+                        guard gen == playGen else {
+                            await resetUltimateIfIdle(client)
+                            return
+                        }
                         resetRemoteClock(running: true)
                     } else {
                         try await client.resume()
                     }
                 } catch {
+                    guard gen == playGen else { return }
                     lastError = error.localizedDescription
                     isPlaying = false
                 }
@@ -1098,8 +1233,20 @@ public final class AppState {
     }
 
     public func stop() {
+        // Abandon a play that is still waiting out the selection debounce or
+        // uploading to the C64 — it would otherwise start the tune after Stop
+        // — and make any remote request already in flight stale.
+        pendingPlay?.cancel()
+        pendingPlay = nil
+        playGen &+= 1
+        let hadRemoteRequest = remotePendingGen != nil
+        remotePendingGen = nil
+        failedAdvances = 0
         player.stop()
-        if outputTarget == .ultimate, let client = ultimate, currentTuneID != nil {
+        // An upload cancelled just now may already have reached the C64, so
+        // reset for that too, not only for an established session.
+        if outputTarget == .ultimate, let client = ultimate,
+           currentTuneID != nil || hadRemoteRequest {
             Task { try? await client.reset() }
         }
         resetRemoteClock(running: false)
@@ -1150,9 +1297,12 @@ public final class AppState {
     /// `checkAutoAdvance`).
     private func jumpToAdjacentTrack(offset: Int) {
         let list = playQueue
-        // Fall back to the selected row when nothing is current — e.g. the
-        // user picked a missing file, so Next should still move past it.
-        guard let id = currentTuneID ?? selectedID, !list.isEmpty else { return }
+        // Step from the row playback was last asked for. That is the current
+        // tune, except when the request failed (a missing file) or is still
+        // starting — and stepping from the current tune then would land on
+        // the same failed row again, every time. After stop() there is no
+        // selection, so the tune that was playing is the anchor.
+        guard let id = selectedID ?? currentTuneID, !list.isEmpty else { return }
 
         let target: Int64
 
@@ -1201,7 +1351,7 @@ public final class AppState {
         // already equals the current selection (a 1-track repeat-all wrap), the
         // didSet won't fire, so replay explicitly.
         if target == selectedID {
-            Task { await play(tuneID: target) }
+            requestPlay(target)
         } else {
             navigatingWithinQueue = true
             selectedID = target
@@ -1249,16 +1399,27 @@ public final class AppState {
     /// Repeat-one already pins the tune, so it walks subtunes even under shuffle.
     private func checkAutoAdvance() {
         guard isPlaying else { return }
+        // A step is already on its way to the C64; wait for its result.
+        guard remotePendingGen == nil else { return }
         let subIdx = max(0, currentSubtune - 1)
         guard subIdx < subtuneLengthsMs.count else { return }
         let lenMs = subtuneLengthsMs[subIdx]
         guard lenMs > 0 else { return }
         guard currentTime * 1000 >= Double(lenMs) else { return }
 
+        // A step that starts nothing leaves the finished tune running, and
+        // the next tick tries the entry after it. Stop after a run of those:
+        // with the HVSC drive unplugged or the C64 unreachable, every entry
+        // fails and the whole queue would be walked.
+        guard failedAdvances < Self.maxFailedAdvances else {
+            stop()
+            return
+        }
+
         if (!shuffleEnabled || repeatMode == .one) && currentSubtune < subtuneCount {
             stepSubtune(+1)
         } else if repeatMode == .one, let id = currentTuneID {
-            Task { await play(tuneID: id) }
+            requestPlay(id)
         } else {
             jumpToAdjacentTrack(offset: +1)
         }
@@ -1271,7 +1432,8 @@ public final class AppState {
         let loaded = await Task.detached(priority: .userInitiated) {
             try? STIL(contentsOf: url)
         }.value
-        if let loaded { self.stil = loaded }
+        // The source may have changed while this loaded.
+        if let loaded, hvscSource == source { self.stil = loaded }
     }
 
     // MARK: Export

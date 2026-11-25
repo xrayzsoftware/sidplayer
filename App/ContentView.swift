@@ -7,7 +7,7 @@ struct ContentView: View {
         @Bindable var state = state
 
         VStack(spacing: 0) {
-            if state.bootstrap == .ready || !state.rows.isEmpty {
+            if state.hasLibrary {
                 NowPlayingHeader()
                     .padding(.horizontal, 12).padding(.top, 12).padding(.bottom, 8)
 
@@ -80,7 +80,10 @@ struct ContentView: View {
             SettingsSheet()
         }
         .task(id: SearchTrigger(state)) {
-            try? await Task.sleep(nanoseconds: 150_000_000)
+            // A keystroke cancels the previous task, and the cancelled sleep
+            // throws. Swallowing that with `try?` let every keystroke fall
+            // straight through to its own full catalog query.
+            do { try await Task.sleep(nanoseconds: 150_000_000) } catch { return }
             try? await state.refreshSearch()
         }
     }

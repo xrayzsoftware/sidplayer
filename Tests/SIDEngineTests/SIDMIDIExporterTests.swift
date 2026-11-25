@@ -238,6 +238,124 @@ final class SIDMIDIExporterTests: XCTestCase {
         XCTAssertGreaterThan(noteOns, 10, "4 s of Commando should transcribe many notes")
     }
 
+    // MARK: - Play rate
+
+    /// The steps (0.1 ms each) at which registers change for a tune whose
+    /// play routine runs every `periodMs` and, on a call that does anything,
+    /// writes at `offsetsMs` into it.
+    private func changeSteps(periodMs: Double, offsetsMs: [Double] = [0], calls: Int,
+                             active: (Int) -> Bool = { _ in true }) -> [Int] {
+        var steps: [Int] = []
+        for call in 0..<calls where active(call) {
+            for offset in offsetsMs {
+                steps.append(Int(((Double(call) * periodMs + offset) / 0.1).rounded()))
+            }
+        }
+        return steps
+    }
+
+    func testPlaySpeedIgnoresWritesSpreadWithinOneCall() {
+        // A single-speed routine that takes its time: voice by voice, 1.2 ms
+        // apart, once per 20 ms frame. Those short distances are not a play
+        // rate — nothing follows them at twice and three times the distance —
+        // and sampling such a tune faster only catches it half-updated.
+        let steps = changeSteps(periodMs: 20, offsetsMs: [0, 1.2, 2.4], calls: 250)
+        XCTAssertEqual(playSpeed(changeSteps: steps, stepMs: 0.1, frameHz: 50), 1)
+    }
+
+    func testPlaySpeedSeesThroughPausesBetweenBusyStretches() {
+        // A 4x tune (5 ms) that often leaves its registers alone for a few
+        // calls: after each change the next comes 1, 2, 3, 4 or 8 calls
+        // later, as measured on a real 4x tune. Most of the time passes in
+        // the pauses — only a fifth of it between changes one call apart —
+        // but those are what the transcription has to keep up with.
+        var call = 0
+        var active: Set<Int> = []
+        var seed: UInt32 = 12345
+        while call < 2000 {
+            active.insert(call)
+            seed = seed &* 1_664_525 &+ 1_013_904_223
+            let roll = Int(seed >> 16) % 100
+            call += roll < 55 ? 1 : roll < 65 ? 2 : roll < 75 ? 3 : roll < 87 ? 4 : 8
+        }
+        let steps = changeSteps(periodMs: 5, calls: 2000) { active.contains($0) }
+        XCTAssertEqual(playSpeed(changeSteps: steps, stepMs: 0.1, frameHz: 50), 4)
+    }
+
+    func testPlaySpeedDoublesForASixtyHertzTuneOnAFiftyHertzFrame() {
+        // The PSID default for a timer-driven tune is 60 calls a second, on
+        // PAL too. Sampled at the 50 Hz frame rate, a call in six is skipped.
+        let steps = changeSteps(periodMs: 1000.0 / 60, calls: 300)
+        XCTAssertEqual(playSpeed(changeSteps: steps, stepMs: 0.1, frameHz: 50), 2)
+        XCTAssertEqual(playSpeed(changeSteps: steps, stepMs: 0.1, frameHz: 60), 1)
+    }
+
+    func testPlaySpeedIsOneWhenThereIsTooLittleToGoOn() {
+        XCTAssertEqual(playSpeed(changeSteps: [], stepMs: 0.1, frameHz: 50), 1)
+        XCTAssertEqual(playSpeed(changeSteps: changeSteps(periodMs: 5, calls: 6), stepMs: 0.1, frameHz: 50), 1)
+    }
+
+    /// A minimal PSID that plays at four times the frame rate: its init sets
+    /// CIA timer A to 200 Hz (PAL), and its play routine moves voice 1 to the
+    /// other of two pitches on every call, under a held gate.
+    private func multiSpeedPSID() -> Data {
+        var header = [UInt8](repeating: 0, count: 0x7C)
+        header.replaceSubrange(0..<4, with: Array("PSID".utf8))
+        header[0x05] = 2                        // version
+        header[0x07] = 0x7C                     // data offset
+        header[0x08] = 0x10                     // load address $1000
+        header[0x0A] = 0x10                     // init  $1000
+        header[0x0C] = 0x10; header[0x0D] = 0x20 // play  $1020
+        header[0x0F] = 1                        // songs
+        header[0x11] = 1                        // start song
+        header[0x15] = 1                        // speed: song 1 is CIA-timed
+        header[0x77] = 0x14                     // flags: PAL, 6581
+        let initCode: [UInt8] = [
+            0xA9, 0x0F, 0x8D, 0x18, 0xD4,       // LDA #$0F : STA $D418   volume
+            0xA9, 0x3D, 0x8D, 0x04, 0xDC,       // LDA #$3D : STA $DC04   timer A = $133D:
+            0xA9, 0x13, 0x8D, 0x05, 0xDC,       // LDA #$13 : STA $DC05   985248 / 4926 = 200 Hz
+            0xA9, 0x1D, 0x85, 0xFB,             // LDA #$1D : STA $FB     pitch (frequency high byte)
+            0xA9, 0xF0, 0x8D, 0x06, 0xD4,       // LDA #$F0 : STA $D406   sustain 15
+            0xA9, 0x41, 0x8D, 0x04, 0xD4,       // LDA #$41 : STA $D404   pulse, gate on
+            0x60, 0xEA, 0xEA,                   // RTS, padded to $1020
+        ]
+        let playCode: [UInt8] = [
+            0xA5, 0xFB, 0x49, 0x13, 0x85, 0xFB, // LDA $FB : EOR #$13 : STA $FB   $1D <-> $0E
+            0x8D, 0x01, 0xD4,                   // STA $D401
+            0x60,                               // RTS
+        ]
+        return Data(header + initCode + playCode)
+    }
+
+    /// Every play call of a multi-speed tune must reach the transcription.
+    /// Here each call is a new note, so two seconds at 200 Hz hold about 400.
+    /// The exporter once took the play rate from the emulator's CIA timer
+    /// read — before the tune's init had run, and from a value that does not
+    /// follow a timer set only once, as this one is. Every tune was sampled
+    /// at the 50 Hz frame rate, which sees this one at the same pitch each
+    /// time: a note or two, the other three calls in four lost.
+    func testMultiSpeedTuneIsSampledAtItsPlayRate() throws {
+        let tmp = URL(fileURLWithPath: NSTemporaryDirectory())
+        let source = tmp.appendingPathComponent("multispeed-\(getpid()).sid")
+        let dest = tmp.appendingPathComponent("multispeed-\(getpid()).mid")
+        defer {
+            try? FileManager.default.removeItem(at: source)
+            try? FileManager.default.removeItem(at: dest)
+        }
+        try multiSpeedPSID().write(to: source)
+
+        try exportSIDToMIDI(path: source.path, song: 1, durationMs: 2000,
+                            sampleRate: 44100, config: EmulationConfig(), to: dest)
+
+        // Frequency high bytes $1D and $0E are 436 Hz and 210 Hz on PAL: MIDI
+        // keys 69 and 56. Voice 1 is channel 0; sustain 15 is velocity 127.
+        let bytes = [UInt8](try Data(contentsOf: dest))
+        let noteOns = occurrences(of: [0x90, 69, 127], in: bytes)
+                    + occurrences(of: [0x90, 56, 127], in: bytes)
+        XCTAssertGreaterThan(noteOns, 300, "a 200 Hz play routine sampled at the frame rate")
+        XCTAssertLessThan(noteOns, 420, "more notes than play calls")
+    }
+
     private func occurrences(of needle: [UInt8], in haystack: [UInt8]) -> Int {
         guard !needle.isEmpty, haystack.count >= needle.count else { return 0 }
         var count = 0

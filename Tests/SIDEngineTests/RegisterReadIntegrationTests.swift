@@ -66,11 +66,26 @@ final class RegisterReadIntegrationTests: XCTestCase {
         XCTAssertGreaterThan(fp.volume, 0)
         XCTAssertGreaterThan(fp.peak, 0, "reSIDfp produced silence")
 
+        // The app's own order when a setting changes (SIDPlayer.reloadCurrentTune):
+        // reload the tune, then restart. The reload detaches the tune, and a
+        // swap with no tune attached is where the engine was left holding SID
+        // emulations whose builder had just been freed. An ordinary run only
+        // crashes on that some of the time; under Guard Malloc it always does
+        // (command in AGENTS.md).
         cfg.engine = .sidlite
         engine.applyConfig(cfg)
+        try engine.load(path: path)
         try engine.start(song: 1, sampleRate: 44_100)   // swap frees the reSIDfp builder
         let lite = renderHalfSecond()           // SIDLite after swap — must not crash
         XCTAssertGreaterThan(lite.volume, 0)
         XCTAssertGreaterThan(lite.peak, 0, "SIDLite produced silence after swap")
+
+        // And the swap with the tune still attached (a restart without a reload).
+        cfg.engine = .residfp
+        engine.applyConfig(cfg)
+        try engine.start(song: 1, sampleRate: 44_100)   // swap frees the SIDLite builder
+        let back = renderHalfSecond()
+        XCTAssertGreaterThan(back.volume, 0)
+        XCTAssertGreaterThan(back.peak, 0, "reSIDfp produced silence after swapping back")
     }
 }

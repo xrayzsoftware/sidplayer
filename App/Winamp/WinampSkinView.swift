@@ -41,6 +41,8 @@ final class WinampSkinView: NSView {
     private var titleRowID: Int64?
 
     private var firstRow = 0
+    /// Trackpad scroll distance not yet turned into whole rows.
+    private var scrollRemainder: CGFloat = 0
     private var selectedID: Int64?
     private var followedID: Int64?
     private let listUnits = 6
@@ -505,11 +507,21 @@ final class WinampSkinView: NSView {
 
     override func scrollWheel(with event: NSEvent) {
         guard showsList, event.scrollingDeltaY != 0 else { return }
-        // One row per wheel notch; trackpads report pixels, 13 to a row.
-        let rows = event.hasPreciseScrollingDeltas
-            ? event.scrollingDeltaY / 13
-            : event.scrollingDeltaY
-        let step = rows > 0 ? Int(rows.rounded(.up)) : Int(rows.rounded(.down))
+        let step: Int
+        if event.hasPreciseScrollingDeltas {
+            // Trackpads report pixels, 13 to a row, in many small events.
+            // Carry the part of a row left over into the next event: rounding
+            // each event up to a whole row moved the list a row per event,
+            // however slight the gesture.
+            if event.phase == .began { scrollRemainder = 0 }
+            scrollRemainder += event.scrollingDeltaY
+            step = Int((scrollRemainder / 13).rounded(.towardZero))
+            scrollRemainder -= CGFloat(step) * 13
+        } else {
+            // One row per wheel notch.
+            let rows = event.scrollingDeltaY
+            step = rows > 0 ? Int(rows.rounded(.up)) : Int(rows.rounded(.down))
+        }
         firstRow = min(max(0, firstRow - step), lastFirstRow)
     }
 

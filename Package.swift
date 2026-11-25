@@ -86,7 +86,11 @@ let package = Package(
         ),
         .testTarget(
             name: "SIDCatalogTests",
-            dependencies: ["SIDCatalog"],
+            dependencies: [
+                "SIDCatalog",
+                // The migration test builds an old-schema database directly.
+                .product(name: "GRDB", package: "GRDB.swift"),
+            ],
             path: "Tests/SIDCatalogTests"
         ),
         .testTarget(

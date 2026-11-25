@@ -20,6 +20,11 @@ swift test
 swift test --filter SIDEngineTests
 swift test --filter SIDCatalogTests
 
+# Run the engine tests under Guard Malloc. A use-after-free in the libsidplayfp
+# bridge only crashes some of the time in an ordinary run; here it always does.
+swift build --build-tests
+DYLD_INSERT_LIBRARIES=/usr/lib/libgmalloc.dylib "$(xcrun --find xctest)" .build/debug/SIDEngineTests.xctest
+
 # Build the .app and install it to /Applications (triggers xcodegen internally)
 ./scripts/install.sh
 
@@ -205,10 +210,10 @@ macOS 14.0 (Sonoma). Do not use APIs introduced after 14.0 without a `@available
 
 ## Tests
 
-Tests live under `Tests/` and use Swift Testing (no XCTest). Run with `swift test`.
+Tests live under `Tests/` and use XCTest. Run with `swift test`.
 
 - `SIDEngineTests` — unit tests for pure-Swift parsing logic (no audio hardware needed).
-- `SIDCatalogTests` — in-memory SQLite; use `CatalogDB(inMemory: true)` pattern from existing tests.
+- `SIDCatalogTests` — in-memory SQLite; use the `CatalogDB()` pattern from existing tests.
 - Tests that need real .sid fixture files check for their presence and skip gracefully if absent (HVSC redistribution constraints).
 - Do not add tests that require a network connection or a live HVSC installation.
 
@@ -220,7 +225,9 @@ When adding a feature, add or extend tests in the nearest matching test file. Do
 
 - **Double-trigger guard**: `AppState.selectedID.didSet` is the sole playback trigger. Don't call `play()` directly from a view — set `selectedID` instead.
 - **Sort performance**: sorting 55k+ `TuneItem`s on the main thread was a prior bottleneck. The `.all` browse mode delegates sorting to SQL (`ORDER BY`). Other modes sort on a background task with generation tagging (`sortGen`) to discard stale results.
-- **Search debounce**: `searchQuery` changes are debounced in `AppState` before hitting the DB. Don't add additional debounce in views.
+- **Search debounce**: `searchQuery` and filter changes are debounced once, by the `.task(id:)` in `ContentView`, before hitting the DB. Don't add another debounce.
+- **A playlist holds each tune once**: track rows, the selection and the play queue all identify a track by its tune id, so `CatalogDB.addToPlaylist` ignores a tune that is already in the playlist and the schema has a unique index on `(playlistId, tuneId)`. Allowing repeats would need a per-position row identity throughout.
+- **Play rate for MIDI export**: libsidplayfp's `getCia1TimerA()` is a counter refreshed only when the tune writes the timer, not the programmed period — don't derive a play rate from it. `measurePlaySpeed` in `SIDMIDIExporter.swift` measures the rate from register activity instead.
 - **Playlist / history IDs**: tune IDs must remain stable across re-index. The indexer upserts by `path`; do not change this to a clear-and-reinsert strategy.
 - **Voice engines cost**: the three per-voice `SIDPlayerEngine` instances each run a full C64 emulation ahead of audio output. Disabling visualizers (`vizEnabled = false`) is the only way to reclaim that CPU. Keep this in mind when adding any visualizer-adjacent feature.
 - **STIL loading**: `AppState.stil` is lazily loaded the first time the STIL popover opens, not at startup. Do not assume it is populated.

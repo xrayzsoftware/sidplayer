@@ -74,6 +74,24 @@ final class PSIDHeaderTests: XCTestCase {
     /// Byte 0x7A is reserved in PSID v2 (older editors left junk in it) and
     /// only gained the second-SID-address meaning in v3. A v2 file with a
     /// non-zero value there must not report a second SID chip.
+    /// The speed bitmap says which interrupt calls a PSID's play routine: a
+    /// clear bit is the frame interrupt (once per video frame, so the MIDI
+    /// export may sample at the frame rate); a set bit is CIA timer A, whose
+    /// rate the tune chooses. An RSID is never the former, whatever its bits.
+    func testSpeedBitSaysWhetherASongIsFrameTimed() throws {
+        var d = makeCommandoHeader()
+        d.beWriteUInt32(at: 0x12, 0x8000_0002)   // songs 2 and 32 are timer-driven
+        let h = try PSIDHeader(data: d)
+        XCTAssertTrue(h.isVBITimed(song: 1))
+        XCTAssertFalse(h.isVBITimed(song: 2))
+        XCTAssertTrue(h.isVBITimed(song: 31))
+        XCTAssertFalse(h.isVBITimed(song: 32))
+        XCTAssertFalse(h.isVBITimed(song: 40), "songs past the 32nd share its bit")
+
+        d.replaceSubrange(0..<4, with: "RSID".data(using: .ascii)!)
+        XCTAssertFalse(try PSIDHeader(data: d).isVBITimed(song: 1))
+    }
+
     func testV2ReservedByteDoesNotFakeSecondSID() throws {
         var d = makeCommandoHeader()
         d[0x7A] = 0x42

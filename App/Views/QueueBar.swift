@@ -32,11 +32,13 @@ struct QueueBar: View {
         if state.repeatMode == .one {
             return "repeating — \(currentTitle)"
         }
-        if state.subtuneCount > 1 && state.currentSubtune < state.subtuneCount {
-            return "sub \(state.currentSubtune + 1)/\(state.subtuneCount) — \(currentTitle)"
-        }
+        // Before the subtune case: shuffle plays one subtune and then a
+        // random tune (see AppState.checkAutoAdvance).
         if state.shuffleEnabled {
             return "shuffle"
+        }
+        if state.subtuneCount > 1 && state.currentSubtune < state.subtuneCount {
+            return "sub \(state.currentSubtune + 1)/\(state.subtuneCount) — \(currentTitle)"
         }
         if let id = state.currentTuneID,
            let idx = state.playQueue.firstIndex(of: id),

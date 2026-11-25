@@ -126,8 +126,11 @@ struct MiniPlayerView: View {
 
     static func hideMainWindow() {
         for win in NSApp.windows {
+            // The Winamp view is a player of its own, not the main window
+            // the mini player stands in for; leave it up.
             guard win.isVisible,
                   !(win is NSPanel),
+                  !(win is WinampWindow),
                   win.identifier?.rawValue != "mini-player" else { continue }
             hiddenWindows.add(win)
             win.orderOut(nil)

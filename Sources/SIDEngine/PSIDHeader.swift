@@ -45,6 +45,16 @@ public struct PSIDHeader: Sendable, Equatable {
         }
     }
 
+    /// True when `song` (1-based) is called from the vertical-blank interrupt,
+    /// once per video frame, rather than from CIA timer A. Only a PSID says:
+    /// an RSID installs its own interrupts. Songs past the 32nd share the
+    /// 32nd's bit.
+    public func isVBITimed(song: Int) -> Bool {
+        guard format == .psid else { return false }
+        let bit = UInt32(min(max(song, 1), 32) - 1)
+        return speed & (1 << bit) == 0
+    }
+
     /// 1, 2, or 3, derived from the v3+ secondSIDAddress / thirdSIDAddress fields.
     public var sidChips: Int {
         var n = 1

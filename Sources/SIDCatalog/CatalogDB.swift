@@ -233,6 +233,25 @@ public final class CatalogDB: Sendable {
             """)
         }
 
+        m.registerMigration("v5_playlist_unique_tunes") { db in
+            // A playlist holds each tune once (see addToPlaylist). Playlists
+            // written before that was enforced may hold repeats: keep each
+            // tune's first position, close the gaps, and have the database
+            // refuse repeats from here on.
+            try db.execute(sql: """
+                DELETE FROM playlist_tracks
+                WHERE EXISTS (
+                    SELECT 1 FROM playlist_tracks AS earlier
+                    WHERE earlier.playlistId = playlist_tracks.playlistId
+                      AND earlier.tuneId = playlist_tracks.tuneId
+                      AND earlier.position < playlist_tracks.position
+                )
+            """)
+            try Self.normalizePlaylistPositions(db)
+            try db.create(index: "playlist_tracks_unique_tune", on: "playlist_tracks",
+                          columns: ["playlistId", "tuneId"], unique: true)
+        }
+
         return m
     }
 
@@ -338,20 +357,23 @@ public final class CatalogDB: Sendable {
     /// Re-densify playlist positions to 0..n-1. A cascaded delete of a stale
     /// tune can leave gaps, and removal-by-index assumes dense positions.
     public func normalizePlaylistPositions() throws {
-        try dbWriter.write { db in
-            let ids = try Int64.fetchAll(db, sql: "SELECT id FROM playlists")
-            for pid in ids {
-                let tracks = try PlaylistTrack
-                    .filter(Column("playlistId") == pid)
-                    .order(Column("position"))
-                    .fetchAll(db)
-                if tracks.enumerated().allSatisfy({ $0.offset == $0.element.position }) {
-                    continue   // already dense
-                }
-                try PlaylistTrack.filter(Column("playlistId") == pid).deleteAll(db)
-                for (i, t) in tracks.enumerated() {
-                    try PlaylistTrack(playlistId: pid, position: i, tuneId: t.tuneId).insert(db)
-                }
+        try dbWriter.write { db in try Self.normalizePlaylistPositions(db) }
+    }
+
+    /// The same, inside a caller-provided transaction (also used by a migration).
+    private static func normalizePlaylistPositions(_ db: Database) throws {
+        let ids = try Int64.fetchAll(db, sql: "SELECT id FROM playlists")
+        for pid in ids {
+            let tracks = try PlaylistTrack
+                .filter(Column("playlistId") == pid)
+                .order(Column("position"))
+                .fetchAll(db)
+            if tracks.enumerated().allSatisfy({ $0.offset == $0.element.position }) {
+                continue   // already dense
+            }
+            try PlaylistTrack.filter(Column("playlistId") == pid).deleteAll(db)
+            for (i, t) in tracks.enumerated() {
+                try PlaylistTrack(playlistId: pid, position: i, tuneId: t.tuneId).insert(db)
             }
         }
     }
@@ -476,8 +498,17 @@ public final class CatalogDB: Sendable {
         }
     }
 
+    /// Appends a tune to a playlist. A tune that is already in it stays where
+    /// it is and nothing is added: track rows, the selection and the play
+    /// queue all identify a track by its tune id, so a second copy cannot be
+    /// told from the first — it sent playback round in a loop and "Remove"
+    /// took the wrong one.
     public func addToPlaylist(playlistId: Int64, tuneId: Int64) throws {
         try dbWriter.write { db in
+            let alreadyThere = try PlaylistTrack
+                .filter(Column("playlistId") == playlistId && Column("tuneId") == tuneId)
+                .fetchCount(db) > 0
+            guard !alreadyThere else { return }
             let nextPos = try Int.fetchOne(
                 db,
                 sql: "SELECT COALESCE(MAX(position), -1) + 1 FROM playlist_tracks WHERE playlistId = ?",
@@ -566,6 +597,12 @@ public final class CatalogDB: Sendable {
         if let clock = filters.clock {
             filterParts.append("tunes.clock = ?")
             filterArgs.append(clock)
+        }
+        if filters.yearFrom != nil || filters.yearTo != nil {
+            // Only rows that start with a full year take part. HVSC writes an
+            // unknown year as "19??" or "198?", which CAST reads as 19 and
+            // 198 — below any upper bound, so they all slipped through.
+            filterParts.append("tunes.released GLOB '[0-9][0-9][0-9][0-9]*'")
         }
         if let yearFrom = filters.yearFrom {
             filterParts.append("CAST(substr(tunes.released, 1, 4) AS INTEGER) >= ?")

@@ -95,10 +95,6 @@ typedef NS_ENUM(NSInteger, CSIDSampling) {
 /// immediately. Pass NO to re-enable. Only valid after startSong:.
 - (void)setVoiceMuted:(NSInteger)voice muted:(BOOL)muted;
 
-/// Returns the CIA1 Timer A value the tune programmed during init, or 0
-/// if VBI-driven. Convertible to a play-rate multiplier of the video frame.
-- (NSInteger)cia1TimerA;
-
 /// Fills `outRegs` (must hold 32 bytes) with the last values written to the
 /// registers of SID chip `sidNum` (0, 1, or 2) — i.e. the tune's programmed
 /// frequency / waveform / ADSR / filter state. Returns NO if that chip doesn't
